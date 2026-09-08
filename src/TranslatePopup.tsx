@@ -61,8 +61,8 @@ useEffect(() => {
             if (payload.cursorX != null && payload.cursorY != null) {
               const popupWidth = 480;
               const popupHeight = 360;
-              let x = payload.cursorX;
-              let y = payload.cursorY;
+              let x = payload.cursorX - popupWidth / 2;
+              let y = payload.cursorY - popupHeight / 2;
               const screenWidth = typeof screen !== 'undefined' ? screen.width : 1920;
               const screenHeight = typeof screen !== 'undefined' ? screen.height : 1080;
               if (x + popupWidth > screenWidth) x = screenWidth - popupWidth;

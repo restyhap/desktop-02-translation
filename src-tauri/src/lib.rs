@@ -202,23 +202,7 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                     let monitor = window.current_monitor().ok().flatten();
                     let screen_width = monitor.as_ref().map(|m| m.size().width as f64).unwrap_or(1920.0);
                     let screen_height = monitor.as_ref().map(|m| m.size().height as f64).unwrap_or(1080.0);
-                    let popup_width = 480.0;
-                    let popup_height = 360.0;
-                    let (pos_x, pos_y) = if let Some(pos) = cursor_pos {
-                        let mut x = pos.x;
-                        let mut y = pos.y;
-                        if x + popup_width > screen_width { x = screen_width - popup_width; }
-                        if y + popup_height > screen_height { y = screen_height - popup_height; }
-                        if x < 0.0 { x = 0.0; }
-                        if y < 0.0 { y = 0.0; }
-                        (x, y)
-                    } else {
-                        (0.0, 0.0)
-                    };
-                    eprintln!("[main] cursor={:?}, screen={}x{}, popup pos=({}, {})", cursor_pos, screen_width, screen_height, pos_x, pos_y);
-                    let _ = window.set_position(tauri::Position::Physical(
-                        tauri::PhysicalPosition { x: pos_x as i32, y: pos_y as i32 }
-                    ));
+                    eprintln!("[main] cursor={:?}, screen={}x{}", cursor_pos, screen_width, screen_height);
                     eprintln!("[main] showing translate window...");
                     match window.show() {
                         Ok(_) => eprintln!("[main] window.show() ok"),
@@ -227,6 +211,20 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                     match window.set_focus() {
                         Ok(_) => eprintln!("[main] window.set_focus() ok"),
                         Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
+                    }
+                    if let Some(pos) = cursor_pos {
+                        let popup_width = 480.0;
+                        let popup_height = 360.0;
+                        let mut x = pos.x - popup_width / 2.0;
+                        let mut y = pos.y - popup_height / 2.0;
+                        if x + popup_width > screen_width { x = screen_width - popup_width; }
+                        if y + popup_height > screen_height { y = screen_height - popup_height; }
+                        if x < 0.0 { x = 0.0; }
+                        if y < 0.0 { y = 0.0; }
+                        let _ = window.set_position(tauri::Position::Physical(
+                            tauri::PhysicalPosition { x: x as i32, y: y as i32 }
+                        ));
+                        eprintln!("[main] set_position to ({}, {})", x, y);
                     }
                     // Emit show-translate event so React popup can display
                     match window.emit(
