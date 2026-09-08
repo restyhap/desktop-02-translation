@@ -7,6 +7,8 @@ import type { DictionarySearchResult } from "@/types/dictionary";
 
 interface TranslateEvent {
   text: string;
+  cursorX: number;
+  cursorY: number;
 }
 
 function TranslatePopup() {
@@ -43,6 +45,14 @@ useEffect(() => {
 }, [visible]);
 
 useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      try {
+        localStorage.setItem("popupMouseX", String(event.screenX));
+        localStorage.setItem("popupMouseY", String(event.screenY));
+      } catch {}
+    };
+    document.addEventListener("mousemove", handleMouseMove);
+
     const timer = setTimeout(() => {
       try {
         const win = getCurrentWindow();
@@ -51,31 +61,37 @@ useEffect(() => {
           let text = "";
           console.log("[popup] event payload:", event.payload);
           if (event.payload) {
-            const payload = event.payload as { text: string; cursorX?: number; cursorY?: number };
-            console.log("[popup] event payload:", event.payload, "| cursor:", { cursorX: payload.cursorX, cursorY: payload.cursorY });
-            const text = payload.text;
+            const payload = event.payload as { text: string; cursorX: number; cursorY: number };
+            text = payload.text || "";
+            const cursorX = payload.cursorX ?? 0;
+            const cursorY = payload.cursorY ?? 0;
             console.log("[popup] text from payload:", text);
             const mockResult = generateMockTranslation(text);
             setResult(mockResult);
-            const win = getCurrentWindow();
-            if (payload.cursorX != null && payload.cursorY != null) {
-              const popupWidth = 480;
-              const popupHeight = 360;
-              let x = payload.cursorX - popupWidth / 2;
-              let y = payload.cursorY - popupHeight / 2;
-              const screenWidth = typeof screen !== 'undefined' ? screen.width : 1920;
-              const screenHeight = typeof screen !== 'undefined' ? screen.height : 1080;
-              if (x + popupWidth > screenWidth) x = screenWidth - popupWidth;
-              if (y + popupHeight > screenHeight) y = screenHeight - popupHeight;
-              if (x < 0) x = 0;
-              if (y < 0) y = 0;
-              win.setPosition(new LogicalPosition(x, y)).catch(() => {});
+            const popupWidth = 480;
+            const popupHeight = 360;
+            let px = cursorX - popupWidth / 2;
+            let py = cursorY - popupHeight / 2;
+            if (px === -popupWidth / 2 && py === -popupHeight / 2) {
+              const storedX = Number(localStorage.getItem("popupMouseX") || 0);
+              const storedY = Number(localStorage.getItem("popupMouseY") || 0);
+              if (storedX && storedY) {
+                px = storedX - popupWidth / 2;
+                py = storedY - popupHeight / 2;
+              }
             }
+            const screenWidth = typeof screen !== 'undefined' ? screen.width : 1920;
+            const screenHeight = typeof screen !== 'undefined' ? screen.height : 1080;
+            if (px + popupWidth > screenWidth) px = screenWidth - popupWidth;
+            if (py + popupHeight > screenHeight) py = screenHeight - popupHeight;
+            if (px < 0) px = 0;
+            if (py < 0) py = 0;
+            win.setPosition(new LogicalPosition(px, py)).catch(() => {});
             setVisible(true);
-            console.log("[popup] result updated:", mockResult);
+            console.log("[popup] positioned at:", { x: px, y: py });
           } else {
             setVisible(true);
-            setResult(generateMockTranslation(""));
+            setResult((prev) => prev || generateMockTranslation(""));
           }
 
           const dictEntry = mockDictionaryEntries[text.toLowerCase()];
@@ -89,9 +105,10 @@ useEffect(() => {
         console.error("[popup] getCurrentWindow error:", err);
       }
     }, 1000);
-    
+
     return () => {
       clearTimeout(timer);
+      document.removeEventListener("mousemove", handleMouseMove);
       console.log("[popup] cleanup listener");
     };
   }, []);

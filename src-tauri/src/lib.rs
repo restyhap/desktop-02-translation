@@ -7,6 +7,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
+
 struct KeyboardHookProcess(Mutex<Option<std::process::Child>>);
 
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
@@ -187,58 +189,61 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
         let reader = BufReader::new(stdout);
         for line in reader.lines().map_while(Result::ok) {
             eprintln!("[main] received line: '{}'", line);
-            if line.trim() == "TRANSLATE" {
-                eprintln!("[main] >>> TRANSLATE received, reading clipboard via Tauri...");
-                let text = match app.clipboard().read_text() {
-                    Ok(t) => t.trim().to_string(),
-                    Err(e) => {
-                        eprintln!("[main] clipboard read error: {}", e);
-                        String::new()
+                    if line.trim() == "TRANSLATE" || line.trim().starts_with("TRANSLATE ") {
+                        eprintln!("[main] >>> TRANSLATE received, reading clipboard via Tauri...");
+                        let text = match app.clipboard().read_text() {
+                            Ok(t) => t.trim().to_string(),
+                            Err(e) => {
+                                eprintln!("[main] clipboard read error: {}", e);
+                                String::new()
+                            }
+                        };
+                        let (cursor_x, cursor_y) = if line.trim() == "TRANSLATE" {
+                            (0.0, 0.0)
+                        } else {
+                            let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
+                            if parts.len() >= 3 {
+                                (
+                                    parts[1].trim().parse::<f64>().unwrap_or(0.0),
+                                    parts[2].trim().parse::<f64>().unwrap_or(0.0),
+                                )
+                            } else {
+                                (0.0, 0.0)
+                            }
+                        };
+                        let display_text = if text.trim().is_empty() {
+                            let last = LAST_CLIPBOARD.lock().unwrap();
+                            last.clone().unwrap_or_default()
+                        } else {
+                            text.clone()
+                        };
+                        eprintln!("[main] display_text len={}", display_text.len());
+                        if !text.trim().is_empty() {
+                            let mut last = LAST_CLIPBOARD.lock().unwrap();
+                            *last = Some(text.clone());
+                        }
+                        if let Some(window) = app.get_webview_window("translate") {
+                            eprintln!("[main] showing translate window...");
+                            match window.show() {
+                                Ok(_) => eprintln!("[main] window.show() ok"),
+                                Err(e) => eprintln!("[main] window.show() error: {}", e),
+                            }
+                            match window.set_focus() {
+                                Ok(_) => eprintln!("[main] window.set_focus() ok"),
+                                Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
+                            }
+                            match window.emit(
+                                "show-translate",
+                                serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
+                            ) {
+                                Ok(_) => eprintln!("[main] window.emit() ok"),
+                                Err(e) => eprintln!("[main] window.emit() error: {}", e),
+                            }
+                            eprintln!("[main] done");
+                        } else {
+                            eprintln!("[main] translate window not found!");
+                        }
                     }
-                };
-                eprintln!("[main] clipboard text len={}", text.len());
-                if let Some(window) = app.get_webview_window("translate") {
-                    let cursor_pos = window.cursor_position().ok();
-                    let monitor = window.current_monitor().ok().flatten();
-                    let screen_width = monitor.as_ref().map(|m| m.size().width as f64).unwrap_or(1920.0);
-                    let screen_height = monitor.as_ref().map(|m| m.size().height as f64).unwrap_or(1080.0);
-                    eprintln!("[main] cursor={:?}, screen={}x{}", cursor_pos, screen_width, screen_height);
-                    eprintln!("[main] showing translate window...");
-                    match window.show() {
-                        Ok(_) => eprintln!("[main] window.show() ok"),
-                        Err(e) => eprintln!("[main] window.show() error: {}", e),
-                    }
-                    match window.set_focus() {
-                        Ok(_) => eprintln!("[main] window.set_focus() ok"),
-                        Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
-                    }
-                    if let Some(pos) = cursor_pos {
-                        let popup_width = 480.0;
-                        let popup_height = 360.0;
-                        let mut x = pos.x - popup_width / 2.0;
-                        let mut y = pos.y - popup_height / 2.0;
-                        if x + popup_width > screen_width { x = screen_width - popup_width; }
-                        if y + popup_height > screen_height { y = screen_height - popup_height; }
-                        if x < 0.0 { x = 0.0; }
-                        if y < 0.0 { y = 0.0; }
-                        let _ = window.set_position(tauri::Position::Physical(
-                            tauri::PhysicalPosition { x: x as i32, y: y as i32 }
-                        ));
-                        eprintln!("[main] set_position to ({}, {})", x, y);
-                    }
-                    // Emit show-translate event so React popup can display
-                    match window.emit(
-                        "show-translate",
-                        serde_json::json!({ "text": text, "cursorX": cursor_pos.map(|p| p.x), "cursorY": cursor_pos.map(|p| p.y) }),
-                    ) {
-                        Ok(_) => eprintln!("[main] window.emit() ok"),
-                        Err(e) => eprintln!("[main] window.emit() error: {}", e),
-                    }
-                    eprintln!("[main] done");
-                } else {
-                    eprintln!("[main] translate window not found!");
-                }
-            }
         }
         eprintln!("[main] stdout reader thread EXITED");
     });

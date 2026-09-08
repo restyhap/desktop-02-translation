@@ -67,14 +67,36 @@ const navGroups: NavGroup[] = [
   },
 ];
 
+function maskKey(key: string): string {
+  if (!key || key.length <= 6) return key ? "•".repeat(key.length) : "";
+  return key.slice(0, 2) + "•".repeat(Math.min(key.length - 6, 8)) + key.slice(-4);
+}
+
+function MaskedKeyInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const masked = maskKey(value);
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="text"
+        value={masked}
+        readOnly
+        onPaste={(e) => {
+          const paste = e.clipboardData.getData("text");
+          onChange(paste);
+        }}
+        className="flex-1 px-2 py-2 border rounded-md text-sm w-full font-mono select-none bg-muted/30"
+        style={{ userSelect: "none" }}
+      />
+      <span className="text-xs text-muted-foreground shrink-0" title="仅支持粘贴，不支持复制">📋 粘贴</span>
+    </div>
+  );
+}
+
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const [settings, setSettings] = useState<AppSettings>(mockSettings);
   const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
   const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
   const [activeNavId, setActiveNavId] = useState<string>("launch");
-  const [isDraggingNav, setIsDraggingNav] = useState(false);
-  const [draggedNavId, setDraggedNavId] = useState<string | null>(null);
-  const [dropOverId, setDropOverId] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -134,66 +156,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   }, []);
 
-  useEffect(() => {
-    const handleNavMouseDown = (event: MouseEvent) => {
-      const button = event.target as HTMLElement;
-      if (button.className.includes("hover:bg-muted")) {
-        setDraggedNavId(button.id);
-        setIsDraggingNav(true);
-        setDropOverId(null);
-        // Capture mouse to receive up events even when leaving the element
-        document.addEventListener("mousemove", handleNavMouseMove);
-        document.addEventListener("mouseup", handleNavMouseUp);
-      }
-    };
-
-    const handleNavMouseMove = (event: MouseEvent) => {
-      // Calculate which nav item is under the mouse
-      const allNavs = document.querySelectorAll(
-        `.w-56 .flex.flex-col > button.w-full.text-left.px-3.py-2`
-      );
-      let overId = null;
-      
-      allNavs.forEach((el) => {
-        const rect = el.getBoundingClientRect();
-        if (
-          event.clientX >= rect.left &&
-          event.clientX <= rect.right &&
-          event.clientY >= rect.top &&
-          event.clientY <= rect.bottom
-        ) {
-          overId = el.getAttribute("id");
-        }
-      });
-      
-      setDropOverId(overId);
-    };
-
-    const handleNavMouseUp = () => {
-      setIsDraggingNav(false);
-      setDraggedNavId(null);
-      setDropOverId(null);
-      document.removeEventListener("mousemove", handleNavMouseMove);
-      document.removeEventListener("mouseup", handleNavMouseUp);
-    };
-
-    // Add mousedown listeners to nav buttons
-    const navButtons = document.querySelectorAll(
-      `.w-56 .flex.flex-col > button.w-full.text-left.px-3.py-2`
-    );
-    navButtons.forEach((button) => {
-      button.addEventListener("mousedown", handleNavMouseDown);
-    });
-
-    return () => {
-      navButtons.forEach((button) => {
-        button.removeEventListener("mousedown", handleNavMouseDown);
-      });
-      document.removeEventListener("mousemove", handleNavMouseMove);
-      document.removeEventListener("mouseup", handleNavMouseUp);
-    };
-  }, []);
-
   const scrollToSection = useCallback((sectionId: string) => {
     const el = sectionRefs.current[sectionId];
     if (el) {
@@ -248,13 +210,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-<div className="w-56 border-r flex flex-col py-3 overflow-y-auto shrink-0">
+        <div className="w-56 border-r flex flex-col py-3 overflow-y-auto shrink-0">
               {navGroups.map((group, groupIndex) => (
               <div key={group.title} className="mb-1">
+                {groupIndex > 0 && <div className="border-t border-border/50 my-3" />}
                 <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   {group.title}
                 </div>
-                {groupIndex > 0 && <hr className="my-2 border-border bg-muted/20" />}
                 {group.items.map((item) => (
                 <button
                   key={item.id}
@@ -323,6 +285,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
           </div>
 
+          <hr className="border-border/50 my-4" />
+
           <div id="section-source-lang" ref={(el) => { sectionRefs.current["section-source-lang"] = el; }}>
             <h3 className="font-semibold text-base mb-3">默认源语言</h3>
             <select
@@ -369,11 +333,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 <div key={engine.value} className="space-y-1">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-medium">{engine.label}:</span>
-                    <input
-                      type="text"
+                    <MaskedKeyInput
                       value={settings.translation.apiKeys[engine.value]}
-                      onChange={(e) => updateTranslation("apiKeys", { ...settings.translation.apiKeys, [engine.value]: e.target.value })}
-                      className="flex-1 px-2 py-2 border rounded-md text-sm w-full"
+                      onChange={(v) => updateTranslation("apiKeys", { ...settings.translation.apiKeys, [engine.value]: v })}
                     />
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -399,6 +361,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
           </div>
 
+          <hr className="border-border/50 my-4" />
+
           <div id="section-llm-endpoint" ref={(el) => { sectionRefs.current["section-llm-endpoint"] = el; }}>
             <h3 className="font-semibold text-base mb-3">模型请求地址</h3>
             <input
@@ -412,14 +376,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 
           <div id="section-llm-key" ref={(el) => { sectionRefs.current["section-llm-key"] = el; }}>
             <h3 className="font-semibold text-base mb-3">模型 API Key</h3>
-            <input
-              type="text"
+            <MaskedKeyInput
               value={settings.llm.apiKey}
-              onChange={(e) => updateLlm("apiKey", e.target.value)}
-              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
-              placeholder="输入大模型 API Key"
+              onChange={(v) => updateLlm("apiKey", v)}
             />
           </div>
+
+          <hr className="border-border/50 my-4" />
 
           <div id="section-theme" ref={(el) => { sectionRefs.current["section-theme"] = el; }}>
             <h3 className="font-semibold text-base mb-3">主题</h3>
@@ -492,26 +455,44 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <div id="section-dict-order" ref={(el) => { sectionRefs.current["section-dict-order"] = el; }}>
             <h3 className="font-semibold text-base mb-3">词典显示顺序</h3>
             <div className="space-y-2">
-              {ENGINE_OPTIONS.map((engine, index) => (
-                <div key={engine.value} className="flex items-center justify-between">
-                  <span className="font-medium">{engine.label}</span>
-                  <select
-                    value={String(settings.appearance.dictionaryOrder[index] || index)}
-                    onChange={(e) => {
+              {settings.appearance.dictionaryOrder.map((dictIndex, sortIndex) => {
+                const engine = ENGINE_OPTIONS[dictIndex];
+                return (
+                  <div
+                    key={engine.value}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/plain", String(dictIndex));
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const fromDictIndex = Number(e.dataTransfer.getData("text/plain"));
+                      const fromPos = settings.appearance.dictionaryOrder.indexOf(fromDictIndex);
+                      if (fromPos === -1 || fromPos === sortIndex) return;
                       const order = [...settings.appearance.dictionaryOrder];
-                      order[index] = Number(e.target.value);
+                      const [moved] = order.splice(fromPos, 1);
+                      order.splice(sortIndex, 0, moved);
                       updateAppearance("dictionaryOrder", order);
                     }}
-                    className="ml-2 px-2 py-2 border rounded-md text-sm w-20"
+                    className="flex items-center justify-between px-3 py-2 border rounded-md cursor-grab active:cursor-grabbing hover:bg-muted/30 transition-colors"
                   >
-                    <option value={0}>默认</option>
-                    <option value={1}>优先</option>
-                    <option value={2}>次级</option>
-                  </select>
-                </div>
-              ))}
+                    <div className="flex items-center gap-2">
+                      <span className="text-muted-foreground text-xs">⠿</span>
+                      <span className="font-medium">{engine.label}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground">#{sortIndex + 1}</span>
+                  </div>
+                );
+              })}
             </div>
           </div>
+
+          <hr className="border-border/50 my-4" />
 
           <div id="section-shortcut-translate" ref={(el) => { sectionRefs.current["section-shortcut-translate"] = el; }}>
             <h3 className="font-semibold text-base mb-3">翻译快捷键</h3>

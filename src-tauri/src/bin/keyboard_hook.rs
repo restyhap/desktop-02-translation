@@ -7,6 +7,7 @@ struct State {
     cmd_held: bool,
     last_c: Instant,
     count: u32,
+    last_mouse_pos: Option<(f64, f64)>,
 }
 
 impl Default for State {
@@ -15,6 +16,7 @@ impl Default for State {
             cmd_held: false,
             last_c: Instant::now() - DOUBLE_TAP_WINDOW,
             count: 0,
+            last_mouse_pos: None,
         }
     }
 }
@@ -54,9 +56,13 @@ fn main() {
                 if state.count >= 2 {
                     state.count = 0;
                     eprintln!("[hook] >>> SENDING TRANSLATE");
-                    let _ = writeln!(stdout, "TRANSLATE");
+                    let (x, y) = state.last_mouse_pos.unwrap_or((0.0, 0.0));
+                    let _ = writeln!(stdout, "TRANSLATE {} {}", x, y);
                     let _ = stdout.flush();
                 }
+            }
+            rdev::EventType::MouseMove { x, y } => {
+                state.last_mouse_pos = Some((x, y));
             }
             _ => {}
         }
