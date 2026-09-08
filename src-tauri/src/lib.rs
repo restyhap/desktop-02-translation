@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, LogicalPosition};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -223,23 +223,53 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                             *last = Some(text.clone());
                         }
                         if let Some(window) = app.get_webview_window("translate") {
-                            eprintln!("[main] showing translate window...");
-                            match window.show() {
-                                Ok(_) => eprintln!("[main] window.show() ok"),
-                                Err(e) => eprintln!("[main] window.show() error: {}", e),
-                            }
-                            match window.set_focus() {
-                                Ok(_) => eprintln!("[main] window.set_focus() ok"),
-                                Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
-                            }
-                            match window.emit(
-                                "show-translate",
-                                serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
-                            ) {
-                                Ok(_) => eprintln!("[main] window.emit() ok"),
-                                Err(e) => eprintln!("[main] window.emit() error: {}", e),
-                            }
-                            eprintln!("[main] done");
+                             eprintln!("[main] showing translate window...");
+                             // rdev cursor_x/cursor_y are in logical points (CGEventGetLocation).
+                             // Tauri setPosition expects logical, but we need to clamp within screen bounds.
+                             // Get monitor info for boundary clamping.
+                             if let Ok(Some(monitor)) = window.current_monitor() {
+                                 let scale = monitor.scale_factor();
+                                 let monitor_logical_width = monitor.size().width as f64 / scale;
+                                 let monitor_logical_height = monitor.size().height as f64 / scale;
+                                 let monitor_logical_x = monitor.position().x as f64 / scale;
+                                 let monitor_logical_y = monitor.position().y as f64 / scale;
+                                 // Get actual popup size from window (physical -> logical)
+                                 let size = window.inner_size().unwrap_or(tauri::PhysicalSize::new(480, 360));
+                                 let popup_logical_width = size.width as f64 / scale;
+                                 let popup_logical_height = size.height as f64 / scale;
+                                 let mut px = cursor_x;
+                                 let mut py = cursor_y;
+                                 // Clamp within monitor bounds
+                                 if px + popup_logical_width > monitor_logical_x + monitor_logical_width {
+                                     px = monitor_logical_x + monitor_logical_width - popup_logical_width;
+                                 }
+                                 if py + popup_logical_height > monitor_logical_y + monitor_logical_height {
+                                     py = monitor_logical_y + monitor_logical_height - popup_logical_height;
+                                 }
+                                 if px < monitor_logical_x { px = monitor_logical_x; }
+                                 if py < monitor_logical_y { py = monitor_logical_y; }
+                                 eprintln!("[main] positioning at logical ({}, {}) with size {}x{}", px, py, popup_logical_width, popup_logical_height);
+                                 window.set_position(LogicalPosition::new(px, py)).unwrap_or_default();
+                             } else {
+                                 // Fallback: no monitor info, just position at cursor
+                                 window.set_position(LogicalPosition::new(cursor_x, cursor_y)).unwrap_or_default();
+                             }
+                             match window.show() {
+                                 Ok(_) => eprintln!("[main] window.show() ok"),
+                                 Err(e) => eprintln!("[main] window.show() error: {}", e),
+                             }
+                             match window.set_focus() {
+                                 Ok(_) => eprintln!("[main] window.set_focus() ok"),
+                                 Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
+                             }
+                             match window.emit(
+                                 "show-translate",
+                                 serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
+                             ) {
+                                 Ok(_) => eprintln!("[main] window.emit() ok"),
+                                 Err(e) => eprintln!("[main] window.emit() error: {}", e),
+                             }
+                             eprintln!("[main] done");
                         } else {
                             eprintln!("[main] translate window not found!");
                         }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { generateMockTranslation } from "@/mocks";
 import { mockDictionaryEntries } from "@/mocks";
 import type { TranslationResult } from "@/types/translation";
@@ -45,74 +45,33 @@ useEffect(() => {
 }, [visible]);
 
 useEffect(() => {
-    const handleMouseMove = (event: MouseEvent) => {
-      try {
-        localStorage.setItem("popupMouseX", String(event.screenX));
-        localStorage.setItem("popupMouseY", String(event.screenY));
-      } catch {}
-    };
-    document.addEventListener("mousemove", handleMouseMove);
-
-    const timer = setTimeout(() => {
-      try {
-        const win = getCurrentWindow();
-        win.listen<TranslateEvent>("show-translate", async (event) => {
-          console.log("[popup] received show-translate event:", event);
-          let text = "";
-          console.log("[popup] event payload:", event.payload);
-          if (event.payload) {
-            const payload = event.payload as { text: string; cursorX: number; cursorY: number };
-            text = payload.text || "";
-            const cursorX = payload.cursorX ?? 0;
-            const cursorY = payload.cursorY ?? 0;
-            console.log("[popup] text from payload:", text);
-            const mockResult = generateMockTranslation(text);
-            setResult(mockResult);
-            const win = getCurrentWindow();
-            const size = await win.innerSize().catch(() => ({ width: 480, height: 360 }));
-            const popupWidth = size.width;
-            const popupHeight = size.height;
-            let px = cursorX - popupWidth / 2;
-            let py = cursorY - popupHeight / 2;
-            if (px === -popupWidth / 2 && py === -popupHeight / 2) {
-              const storedX = Number(localStorage.getItem("popupMouseX") || 0);
-              const storedY = Number(localStorage.getItem("popupMouseY") || 0);
-              if (storedX && storedY) {
-                px = storedX - popupWidth / 2;
-                py = storedY - popupHeight / 2;
-              }
-            }
-            const screenWidth = typeof screen !== 'undefined' ? screen.width : 1920;
-            const screenHeight = typeof screen !== 'undefined' ? screen.height : 1080;
-            if (px + popupWidth > screenWidth) px = screenWidth - popupWidth;
-            if (py + popupHeight > screenHeight) py = screenHeight - popupHeight;
-            if (px < 0) px = 0;
-            if (py < 0) py = 0;
-            win.setPosition(new LogicalPosition(px, py)).catch(() => {});
-            setVisible(true);
-            console.log("[popup] positioned at:", { x: px, y: py });
-          } else {
-            setVisible(true);
-            setResult((prev) => prev || generateMockTranslation(""));
-          }
-
+    try {
+      const win = getCurrentWindow();
+      win.listen<TranslateEvent>("show-translate", async (event) => {
+        console.log("[popup] received show-translate event:", event);
+        let text = "";
+        console.log("[popup] event payload:", event.payload);
+        if (event.payload) {
+          const payload = event.payload as { text: string; cursorX: number; cursorY: number };
+          text = payload.text || "";
+          console.log("[popup] text from payload:", text);
+          const mockResult = generateMockTranslation(text);
+          setResult(mockResult);
           const dictEntry = mockDictionaryEntries[text.toLowerCase()];
           setDictResult(dictEntry || null);
-
           await win.setAlwaysOnTop(true);
-        }).catch((err) => {
-          console.error("[popup] failed to listen:", err);
-        });
-      } catch (err) {
-        console.error("[popup] getCurrentWindow error:", err);
-      }
-    }, 1000);
-
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener("mousemove", handleMouseMove);
-      console.log("[popup] cleanup listener");
-    };
+          setVisible(true);
+          console.log("[popup] content updated, position set by Rust side");
+        } else {
+          setVisible(true);
+          setResult((prev) => prev || generateMockTranslation(""));
+        }
+      }).catch((err) => {
+        console.error("[popup] failed to listen:", err);
+      });
+    } catch (err) {
+      console.error("[popup] getCurrentWindow error:", err);
+    }
   }, []);
 
   const handleClose = async () => {
