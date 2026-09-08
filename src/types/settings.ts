@@ -33,6 +33,7 @@ export interface AppearanceSettings {
   theme: "light" | "dark" | "system";
   fontSize: "small" | "medium" | "large";
   opacity: number;
+  hideDelay: number;
   dictionaryDirectory: string;
   dictionaryOrder: number[];
 }
@@ -66,6 +67,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: "system",
     fontSize: "medium",
     opacity: 100,
+    hideDelay: 5,
     dictionaryDirectory: "",
     dictionaryOrder: [0, 1, 2, 3],
   },

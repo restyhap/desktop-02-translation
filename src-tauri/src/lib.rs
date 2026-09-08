@@ -198,7 +198,27 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                 };
                 eprintln!("[main] clipboard text len={}", text.len());
                 if let Some(window) = app.get_webview_window("translate") {
-                    // Show the window and set focus
+                    let cursor_pos = window.cursor_position().ok();
+                    let monitor = window.current_monitor().ok().flatten();
+                    let screen_width = monitor.as_ref().map(|m| m.size().width as f64).unwrap_or(1920.0);
+                    let screen_height = monitor.as_ref().map(|m| m.size().height as f64).unwrap_or(1080.0);
+                    let popup_width = 480.0;
+                    let popup_height = 360.0;
+                    let (pos_x, pos_y) = if let Some(pos) = cursor_pos {
+                        let mut x = pos.x;
+                        let mut y = pos.y;
+                        if x + popup_width > screen_width { x = screen_width - popup_width; }
+                        if y + popup_height > screen_height { y = screen_height - popup_height; }
+                        if x < 0.0 { x = 0.0; }
+                        if y < 0.0 { y = 0.0; }
+                        (x, y)
+                    } else {
+                        (0.0, 0.0)
+                    };
+                    eprintln!("[main] cursor={:?}, screen={}x{}, popup pos=({}, {})", cursor_pos, screen_width, screen_height, pos_x, pos_y);
+                    let _ = window.set_position(tauri::Position::Physical(
+                        tauri::PhysicalPosition { x: pos_x as i32, y: pos_y as i32 }
+                    ));
                     eprintln!("[main] showing translate window...");
                     match window.show() {
                         Ok(_) => eprintln!("[main] window.show() ok"),
@@ -209,10 +229,9 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                         Err(e) => eprintln!("[main] window.set_focus() error: {}", e),
                     }
                     // Emit show-translate event so React popup can display
-                    // Always emit regardless of cursor position success/failure
                     match window.emit(
                         "show-translate",
-                        serde_json::json!({ "text": text }),
+                        serde_json::json!({ "text": text, "cursorX": cursor_pos.map(|p| p.x), "cursorY": cursor_pos.map(|p| p.y) }),
                     ) {
                         Ok(_) => eprintln!("[main] window.emit() ok"),
                         Err(e) => eprintln!("[main] window.emit() error: {}", e),

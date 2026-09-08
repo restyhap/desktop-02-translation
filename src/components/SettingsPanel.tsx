@@ -53,6 +53,7 @@ const navGroups: NavGroup[] = [
       { id: "theme", label: "主题", sectionId: "section-theme" },
       { id: "font-size", label: "字体大小", sectionId: "section-font-size" },
       { id: "opacity", label: "不透明度", sectionId: "section-opacity" },
+      { id: "hide-delay", label: "自动隐藏延迟", sectionId: "section-hide-delay" },
       { id: "dict-dir", label: "词典目录", sectionId: "section-dict-dir" },
       { id: "dict-order", label: "词典顺序", sectionId: "section-dict-order" },
     ],
@@ -222,6 +223,9 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       ...prev,
       appearance: { ...prev.appearance, [key]: value },
     }));
+    if (key === "hideDelay") {
+      localStorage.setItem("hideDelay", String(value));
+    }
   };
 
   const updateLlm = (key: keyof AppSettings["llm"], value: string) => {
@@ -244,13 +248,13 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-56 border-r flex flex-col py-3 overflow-y-auto shrink-0">
-{navGroups.map((group) => (
-              <div key={group.title} className="mb-1 border-b">
+<div className="w-56 border-r flex flex-col py-3 overflow-y-auto shrink-0">
+              {navGroups.map((group, groupIndex) => (
+              <div key={group.title} className="mb-1">
                 <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   {group.title}
                 </div>
-                <hr className="my-2 border-border bg-muted/20" />
+                {groupIndex > 0 && <hr className="my-2 border-border bg-muted/20" />}
                 {group.items.map((item) => (
                 <button
                   key={item.id}
@@ -401,7 +405,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               type="text"
               value={settings.llm.endpoint}
               onChange={(e) => updateLlm("endpoint", e.target.value)}
-              className="w-full px-2 py-1 border rounded-md text-sm mt-1"
+              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
               placeholder="http://localhost:11434/api/generate"
             />
           </div>
@@ -412,7 +416,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               type="text"
               value={settings.llm.apiKey}
               onChange={(e) => updateLlm("apiKey", e.target.value)}
-              className="w-full px-2 py-1 border rounded-md text-sm mt-1"
+              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
               placeholder="输入大模型 API Key"
             />
           </div>
@@ -458,12 +462,31 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <div id="section-dict-dir" ref={(el) => { sectionRefs.current["section-dict-dir"] = el; }}>
             <h3 className="font-semibold text-base mb-3">词典目录</h3>
             <input
-              type="text"
+              type="file"
+              {...({ webkitdirectory: true, directory: "" } as any)}
               value={settings.appearance.dictionaryDirectory || ""}
               onChange={(e) => updateAppearance("dictionaryDirectory", e.target.value)}
-              className="w-full px-2 py-1 border rounded-md text-sm mt-1"
-              placeholder="输入词典文件目录路径"
+              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
             />
+          </div>
+
+          <div id="section-hide-delay" ref={(el) => { sectionRefs.current["section-hide-delay"] = el; }}>
+            <h3 className="font-semibold text-base mb-3">自动隐藏延迟</h3>
+            <div className="flex items-center justify-between py-3">
+              <div>
+                <div className="text-sm text-muted-foreground">鼠标离开弹窗后自动隐藏</div>
+              </div>
+              <select
+                value={settings.appearance.hideDelay}
+                onChange={(e) => updateAppearance("hideDelay", Number(e.target.value))}
+                className="w-full px-3 py-2 border rounded-md text-sm"
+              >
+                <option value={0}>不隐藏</option>
+                <option value={3}>3 秒</option>
+                <option value={5}>5 秒</option>
+                <option value={10}>10 秒</option>
+              </select>
+            </div>
           </div>
 
           <div id="section-dict-order" ref={(el) => { sectionRefs.current["section-dict-order"] = el; }}>

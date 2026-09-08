@@ -24,6 +24,7 @@ export const mockSettings: AppSettings = {
     theme: "system",
     fontSize: "medium",
     opacity: 100,
+    hideDelay: 5,
     dictionaryDirectory: "",
     dictionaryOrder: [0, 1, 2, 3],
   },

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
 import { generateMockTranslation } from "@/mocks";
 import { mockDictionaryEntries } from "@/mocks";
 import type { TranslationResult } from "@/types/translation";
@@ -13,13 +13,14 @@ function TranslatePopup() {
   const [result, setResult] = useState<TranslationResult | null>(generateMockTranslation(""));
   const [dictResult, setDictResult] = useState<DictionarySearchResult | null>(null);
   const [visible, setVisible] = useState(true);
+  const hideDelay = Number(localStorage.getItem("hideDelay") || "5");
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const scheduleHide = () => {
     hideTimerRef.current = setTimeout(() => {
       const win = getCurrentWindow();
       win.hide().catch(() => {});
-    }, 5000);
+    }, hideDelay * 1000);
   };
 
   const cancelHide = () => {
@@ -50,10 +51,26 @@ useEffect(() => {
           let text = "";
           console.log("[popup] event payload:", event.payload);
           if (event.payload) {
-            text = event.payload.text;
+            const payload = event.payload as { text: string; cursorX?: number; cursorY?: number };
+            console.log("[popup] event payload:", event.payload, "| cursor:", { cursorX: payload.cursorX, cursorY: payload.cursorY });
+            const text = payload.text;
             console.log("[popup] text from payload:", text);
             const mockResult = generateMockTranslation(text);
             setResult(mockResult);
+            const win = getCurrentWindow();
+            if (payload.cursorX != null && payload.cursorY != null) {
+              const popupWidth = 480;
+              const popupHeight = 360;
+              let x = payload.cursorX;
+              let y = payload.cursorY;
+              const screenWidth = typeof screen !== 'undefined' ? screen.width : 1920;
+              const screenHeight = typeof screen !== 'undefined' ? screen.height : 1080;
+              if (x + popupWidth > screenWidth) x = screenWidth - popupWidth;
+              if (y + popupHeight > screenHeight) y = screenHeight - popupHeight;
+              if (x < 0) x = 0;
+              if (y < 0) y = 0;
+              win.setPosition(new LogicalPosition(x, y)).catch(() => {});
+            }
             setVisible(true);
             console.log("[popup] result updated:", mockResult);
           } else {
