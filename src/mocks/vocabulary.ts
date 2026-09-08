@@ -1,0 +1,88 @@
+import type { VocabularyGroup, VocabularyWord } from "@/types/vocabulary";
+
+export const mockVocabularyGroups: VocabularyGroup[] = [
+  {
+    id: "g1",
+    name: "常用词汇",
+    color: "#2563eb",
+    createdAt: Date.now() - 86400000 * 30,
+  },
+  {
+    id: "g2",
+    name: "专业术语",
+    color: "#22c55e",
+    createdAt: Date.now() - 86400000 * 20,
+  },
+  {
+    id: "g3",
+    name: "考试重点",
+    color: "#f59e0b",
+    createdAt: Date.now() - 86400000 * 10,
+  },
+];
+
+export const mockVocabularyWords: VocabularyWord[] = [
+  {
+    id: "w1",
+    word: "ubiquitous",
+    translation: "无处不在的",
+    phonetic: "/juːˈbɪkwɪtəs/",
+    example: "Smartphones have become ubiquitous in modern life.",
+    groupId: "g1",
+    createdAt: Date.now() - 86400000 * 25,
+    reviewCount: 5,
+    lastReviewedAt: Date.now() - 86400000 * 2,
+  },
+  {
+    id: "w2",
+    word: "ephemeral",
+    translation: "短暂的",
+    phonetic: "/ɪˈfemərəl/",
+    example: "Fame is often ephemeral.",
+    groupId: "g1",
+    createdAt: Date.now() - 86400000 * 20,
+    reviewCount: 3,
+    lastReviewedAt: Date.now() - 86400000 * 5,
+  },
+  {
+    id: "w3",
+    word: "paradigm",
+    translation: "范例，范式",
+    phonetic: "/ˈpærədaɪm/",
+    example: "A paradigm shift in scientific thinking.",
+    groupId: "g2",
+    createdAt: Date.now() - 86400000 * 15,
+    reviewCount: 2,
+  },
+  {
+    id: "w4",
+    word: "algorithm",
+    translation: "算法",
+    phonetic: "/ˈælɡərɪðəm/",
+    example: "The search algorithm finds relevant results quickly.",
+    groupId: "g2",
+    createdAt: Date.now() - 86400000 * 12,
+    reviewCount: 4,
+    lastReviewedAt: Date.now() - 86400000,
+  },
+  {
+    id: "w5",
+    word: "metamorphosis",
+    translation: "蜕变，变形",
+    phonetic: "/ˌmetəˈmɔːrfəsɪs/",
+    example: "The caterpillar undergoes metamorphosis.",
+    groupId: "g3",
+    createdAt: Date.now() - 86400000 * 8,
+    reviewCount: 1,
+  },
+  {
+    id: "w6",
+    word: "resilience",
+    translation: "韧性，恢复力",
+    phonetic: "/rɪˈzɪliəns/",
+    example: "Children show remarkable resilience.",
+    groupId: "g3",
+    createdAt: Date.now() - 86400000 * 5,
+    reviewCount: 0,
+  },
+];
