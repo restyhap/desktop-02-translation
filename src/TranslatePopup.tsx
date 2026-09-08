@@ -68,8 +68,10 @@ useEffect(() => {
             console.log("[popup] text from payload:", text);
             const mockResult = generateMockTranslation(text);
             setResult(mockResult);
-            const popupWidth = 480;
-            const popupHeight = 360;
+            const win = getCurrentWindow();
+            const size = await win.innerSize().catch(() => ({ width: 480, height: 360 }));
+            const popupWidth = size.width;
+            const popupHeight = size.height;
             let px = cursorX - popupWidth / 2;
             let py = cursorY - popupHeight / 2;
             if (px === -popupWidth / 2 && py === -popupHeight / 2) {
