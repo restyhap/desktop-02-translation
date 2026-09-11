@@ -1,86 +1,177 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { TranslationResult } from "@/types/translation";
-import type { DictionarySearchResult } from "@/types/dictionary";
+import { listApiKeys } from "@/storage";
+
+interface ApiKeyInfo {
+  service_name: string;
+  display_name: string;
+}
 
 interface TranslationResultProps {
   result: TranslationResult | null;
-  dictResult?: DictionarySearchResult | null;
+  loading?: boolean;
+  error?: string | null;
+  currentEngine?: string;
+  onEngineChange?: (engine: string) => void;
 }
 
-export function TranslationResultPanel({ result, dictResult }: TranslationResultProps) {
-  const [activeDict, setActiveDict] = useState(0);
+export function TranslationResultPanel({ result, loading = false, error = null, currentEngine, onEngineChange }: TranslationResultProps) {
+  const [engines, setEngines] = useState<ApiKeyInfo[]>([]);
+  const [engineLoading, setEngineLoading] = useState(true);
 
-  if (dictResult && dictResult.entries.length > 0) {
-    const dictNames = dictResult.dictionaries;
-    const entries = dictResult.entries;
-    const entry = entries[activeDict];
+  useEffect(() => {
+    listApiKeys().then(keys => {
+      setEngines(keys);
+      if (keys.length > 0 && !currentEngine) {
+        onEngineChange?.(keys[0].service_name);
+      }
+      setEngineLoading(false);
+    }).catch(() => {
+      const stored = localStorage.getItem("apiKeys");
+      if (stored) {
+        try {
+          const keys: ApiKeyInfo[] = JSON.parse(stored);
+          setEngines(keys);
+          if (keys.length > 0 && !currentEngine) {
+            onEngineChange?.(keys[0].service_name);
+          }
+        } catch (e) {
+          console.error("解析 localStorage 失败:", e);
+        }
+      }
+      setEngineLoading(false);
+    });
+  }, []);
 
+  if (engineLoading) {
     return (
-      <div className="flex flex-col h-full p-4">
-        <div className="flex gap-1 mb-3 border-b">
-          {dictNames.map((name, i) => (
+      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+        加载中...
+      </div>
+    );
+  }
+
+  if (engines.length === 0) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+          暂无翻译服务，请在设置中配置
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex border-b px-3">
+          {engines.map((opt) => (
             <button
-              key={name}
-              onClick={() => setActiveDict(i)}
-              className={`px-3 py-1.5 text-xs font-medium border-b-2 transition-colors ${
-                activeDict === i ? "border-primary text-primary" : "border-transparent text-muted-foreground"
+              key={opt.service_name}
+              onClick={() => onEngineChange?.(opt.service_name)}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                currentEngine === opt.service_name
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
               }`}
             >
-              {name}
+              {opt.display_name}
             </button>
           ))}
         </div>
-        {entry && (
-          <div className="flex-1 overflow-y-auto">
-            <div className="text-lg font-semibold mb-1">{entry.word}</div>
-            {entry.phonetic && <div className="text-sm text-muted-foreground mb-3">{entry.phonetic}</div>}
-            {entry.definitions.map((def, i) => (
-              <div key={i} className="mb-3">
-                <span className="text-xs px-1.5 py-0.5 bg-muted rounded text-muted-foreground">{def.partOfSpeech}</span>
-                <div className="text-sm mt-1">{def.meaning}</div>
-                {def.example && (
-                  <div className="text-xs text-muted-foreground mt-1 italic">"{def.example}"</div>
-                )}
-              </div>
-            ))}
-            {entry.synonyms && entry.synonyms.length > 0 && (
-              <div className="mt-3 text-xs text-muted-foreground">
-                同类词: {entry.synonyms.join(", ")}
-              </div>
-            )}
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+          <div className="flex flex-col items-center gap-2">
+            <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+            <div>翻译中...</div>
           </div>
-        )}
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex border-b px-3">
+          {engines.map((opt) => (
+            <button
+              key={opt.service_name}
+              onClick={() => onEngineChange?.(opt.service_name)}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                currentEngine === opt.service_name
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {opt.display_name}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 flex items-center justify-center p-4">
+          <div className="text-center text-sm text-destructive">
+            <div className="font-medium mb-1">翻译失败</div>
+            <div className="text-xs text-muted-foreground">{error}</div>
+          </div>
+        </div>
       </div>
     );
   }
 
   if (!result) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        输入文本并点击翻译按钮
+      <div className="flex flex-col h-full">
+        <div className="flex border-b px-3">
+          {engines.map((opt) => (
+            <button
+              key={opt.service_name}
+              onClick={() => onEngineChange?.(opt.service_name)}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+                currentEngine === opt.service_name
+                  ? "border-primary text-primary"
+                  : "border-transparent text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {opt.display_name}
+            </button>
+          ))}
+        </div>
+        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+          输入文本并点击翻译按钮
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full p-4">
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-xs px-2 py-1 bg-muted rounded">
-          {result.sourceLang.toUpperCase()}
-        </span>
-        <span className="text-xs text-muted-foreground">→</span>
-        <span className="text-xs px-2 py-1 bg-muted rounded">
-          {result.targetLang.toUpperCase()}
-        </span>
-        <span className="text-xs text-muted-foreground ml-auto">
-          {result.engine}
-        </span>
+    <div className="flex flex-col h-full">
+      <div className="flex border-b px-3">
+        {engines.map((opt) => (
+          <button
+            key={opt.service_name}
+            onClick={() => onEngineChange?.(opt.service_name)}
+            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
+              currentEngine === opt.service_name
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            {opt.display_name}
+          </button>
+        ))}
       </div>
-      <div className="mb-4">
-        <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">原文</div>
-        <div className="text-sm leading-relaxed">{result.sourceText}</div>
-      </div>
-      <div>
+      <div className="flex-1 p-4">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-xs px-2 py-1 bg-muted rounded">
+            {result.sourceLang.toUpperCase()}
+          </span>
+          <span className="text-xs text-muted-foreground">→</span>
+          <span className="text-xs px-2 py-1 bg-muted rounded">
+            {result.targetLang.toUpperCase()}
+          </span>
+          <span className="text-xs text-muted-foreground ml-auto">
+            {result.engine}
+          </span>
+        </div>
         <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
         <div className="text-sm font-medium leading-relaxed text-primary">
           {result.translatedText}

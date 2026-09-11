@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { mockSettings } from "@/mocks";
+import { useToast } from "@/components/ui/Toast";
 import type { AppSettings } from "@/types/settings";
 import type { ShortcutConfig } from "@/types/shortcuts";
-import { SUPPORTED_LANGUAGES, ENGINE_OPTIONS } from "@/types/translation";
+import { SUPPORTED_LANGUAGES, ApiKeyRecord } from "@/types/translation";
 import { ShortcutRecorder } from "./ShortcutRecorder";
 
 interface SettingsPanelProps {
@@ -41,21 +41,12 @@ const navGroups: NavGroup[] = [
     ],
   },
   {
-    title: "模型",
-    items: [
-      { id: "llm-endpoint", label: "请求地址", sectionId: "section-llm-endpoint" },
-      { id: "llm-key", label: "API Key", sectionId: "section-llm-key" },
-    ],
-  },
-  {
     title: "外观",
     items: [
       { id: "theme", label: "主题", sectionId: "section-theme" },
       { id: "font-size", label: "字体大小", sectionId: "section-font-size" },
       { id: "opacity", label: "不透明度", sectionId: "section-opacity" },
       { id: "hide-delay", label: "自动隐藏延迟", sectionId: "section-hide-delay" },
-      { id: "dict-dir", label: "词典目录", sectionId: "section-dict-dir" },
-      { id: "dict-order", label: "词典顺序", sectionId: "section-dict-order" },
     ],
   },
   {
@@ -67,62 +58,83 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-function maskKey(key: string): string {
-  if (!key || key.length <= 6) return key ? "•".repeat(key.length) : "";
-  return key.slice(0, 2) + "•".repeat(Math.min(key.length - 6, 8)) + key.slice(-4);
-}
 
-function MaskedKeyInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
-  const masked = maskKey(value);
-  return (
-    <div className="flex items-center gap-2">
-      <input
-        type="text"
-        value={masked}
-        readOnly
-        onPaste={(e) => {
-          const paste = e.clipboardData.getData("text");
-          onChange(paste);
-        }}
-        className="flex-1 px-2 py-2 border rounded-md text-sm w-full font-mono select-none bg-muted/30"
-        style={{ userSelect: "none" }}
-      />
-      <span className="text-xs text-muted-foreground shrink-0" title="仅支持粘贴，不支持复制">📋 粘贴</span>
-    </div>
-  );
-}
+// 默认设置
+const DEFAULT_SETTINGS: AppSettings = {
+  general: { launchAtStartup: false, closeBehavior: "minimizeToTray", checkUpdates: true, language: "zh" },
+  translation: { defaultSourceLang: "en", defaultTargetLang: "zh", defaultEngine: "google", autoDetect: true, pasteToTranslate: false },
+  appearance: { theme: "system", fontSize: "medium", opacity: 100, hideDelay: 5 },
+  shortcuts: { translate: "Ctrl+C+C", showMain: "Ctrl+Shift+T" },
+  llm: { endpoint: "", apiKey: "" },
+};
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
-  const [settings, setSettings] = useState<AppSettings>(mockSettings);
+  const { showToast } = useToast();
+  const [settings, setSettings] = useState<AppSettings | null>(null);
   const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
   const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
   const [activeNavId, setActiveNavId] = useState<string>("launch");
+  const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
+  const [showAddModal, setShowAddModal] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
+  // 加载设置
   useEffect(() => {
-    invoke<ShortcutConfig>("get_shortcuts_cmd")
-      .then((config) => {
+    const loadSettings = async () => {
+      try {
+        const result = await invoke<any>("get_all_settings_cmd");
+        let loadedSettings: AppSettings = { ...DEFAULT_SETTINGS };
+        
+        if (result && typeof result === "object") {
+          const r = result as any;
+          if (r.general) loadedSettings.general = { ...DEFAULT_SETTINGS.general, ...r.general };
+          if (r.translation) loadedSettings.translation = { ...DEFAULT_SETTINGS.translation, ...r.translation };
+          if (r.appearance) loadedSettings.appearance = { ...DEFAULT_SETTINGS.appearance, ...r.appearance };
+          if (r.shortcuts) loadedSettings.shortcuts = { ...DEFAULT_SETTINGS.shortcuts, ...r.shortcuts };
+          if (r.llm) loadedSettings.llm = { ...DEFAULT_SETTINGS.llm, ...r.llm };
+        }
+        
+        setSettings(loadedSettings);
+        setLoadError(null);
+      } catch (error) {
+        console.error("[Settings] 加载设置失败:", error);
+        setLoadError(error instanceof Error ? error.message : "加载失败");
+        setSettings(DEFAULT_SETTINGS);
+      }
+    };
+
+    const loadShortcuts = async () => {
+      try {
+        const config = await invoke<ShortcutConfig>("get_shortcuts_cmd");
         setShortcuts(config);
         setShortcutsLoaded(true);
-      })
-      .catch(() => setShortcutsLoaded(true));
+      } catch {
+        setShortcutsLoaded(true);
+      }
+    };
 
-    invoke<string>("get_close_behavior_cmd")
-      .then((behavior) => {
-        setSettings((prev) => ({
-          ...prev,
-          general: { ...prev.general, closeBehavior: behavior as "minimizeToTray" | "exit" },
-        }));
-      })
-      .catch(() => {});
+    const loadApiKeys = async () => {
+      try {
+        const keys = await invoke<ApiKeyRecord[]>("list_api_keys_cmd");
+        setApiKeys(keys);
+      } catch (error) {
+        console.error("[Settings] 加载 API Key 失败:", error);
+      }
+    };
+
+    loadSettings();
+    loadShortcuts();
+    loadApiKeys();
   }, []);
 
+  // 滚动监听
   useEffect(() => {
     const handleScroll = () => {
       const content = contentRef.current;
       if (!content) return;
-      const sections = content.getBoundingClientRect();
 
       let closestId = navGroups[0].items[0].sectionId;
       let closestDistance = Infinity;
@@ -132,7 +144,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           const el = sectionRefs.current[item.sectionId];
           if (el) {
             const rect = el.getBoundingClientRect();
-            const distance = Math.abs(rect.top - sections.top);
+            const distance = Math.abs(rect.top - content.getBoundingClientRect().top);
             if (distance < closestDistance) {
               closestDistance = distance;
               closestId = item.sectionId;
@@ -163,43 +175,100 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   }, []);
 
-  const updateGeneral = (key: keyof AppSettings["general"], value: boolean | string) => {
-    setSettings((prev) => ({
-      ...prev,
-      general: { ...prev.general, [key]: value },
-    }));
-    if (key === "closeBehavior") {
-      invoke("update_close_behavior_cmd", { behavior: value });
+  const updateSetting = (section: keyof AppSettings, key: string, value: any) => {
+    setSettings((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        [section]: { ...prev[section], [key]: value },
+      };
+    });
+  };
+
+  const handleSave = async () => {
+    if (!settings) return;
+    
+    setSaving(true);
+    try {
+      await invoke("save_all_settings_cmd", { settings });
+      showToast("设置已保存", "success");
+    } catch (error) {
+      console.error("[Settings] 保存失败:", error);
+      showToast("保存失败，请重试", "error");
+    } finally {
+      setSaving(false);
     }
   };
 
-  const updateTranslation = (key: keyof AppSettings["translation"], value: unknown) => {
-    setSettings((prev) => ({
-      ...prev,
-      translation: { ...prev.translation, [key]: value },
-    }));
-  };
-
-  const updateAppearance = (key: keyof AppSettings["appearance"], value: unknown) => {
-    setSettings((prev) => ({
-      ...prev,
-      appearance: { ...prev.appearance, [key]: value },
-    }));
-    if (key === "hideDelay") {
-      localStorage.setItem("hideDelay", String(value));
+  const refreshApiKeys = async () => {
+    try {
+      const keys = await invoke<ApiKeyRecord[]>("list_api_keys_cmd");
+      setApiKeys(keys);
+      return keys;
+    } catch (error) {
+      console.error("[Settings] 刷新 API Key 失败:", error);
+      return [];
     }
   };
 
-  const updateLlm = (key: keyof AppSettings["llm"], value: string) => {
-    setSettings((prev) => ({
-      ...prev,
-      llm: { ...prev.llm, [key]: value },
-    }));
+  const handleAddApiKey = async (name: string, appId: string, key: string, sort: number) => {
+    if (!name.trim() || !key.trim()) {
+      showToast("名称和密钥都是必填项", "error");
+      return;
+    }
+    // 将显示名称映射到标准引擎名
+    const engineMap: Record<string, string> = {
+      "google": "google", "谷歌": "google", "googel": "google",
+      "deepl": "deepl", "deep": "deepl",
+      "baidu": "baidu", "百度": "baidu", "百度翻译": "baidu",
+      "youdao": "youdao", "有道": "youdao", "有道翻译": "youdao",
+      "caiyun": "caiyun", "彩云": "caiyun", "彩云小译": "caiyun",
+    };
+    const standardEngine = engineMap[name.trim().toLowerCase()] || name.trim().toLowerCase();
+    
+    try {
+      await invoke("add_api_key_cmd", {
+        service: standardEngine,
+        display_name: name.trim(),
+        app_id: appId.trim() || null,
+        key: key.trim(),
+        sort,
+      });
+      showToast("API Key 添加成功", "success");
+      setShowAddModal(false);
+      await refreshApiKeys();
+    } catch (error) {
+      console.error("[Settings] 添加 API Key 失败:", error);
+      showToast("添加失败，请重试", "error");
+    }
   };
+
+  const handleDeleteApiKey = async (serviceName: string) => {
+    try {
+      await invoke("delete_api_key_cmd", { service: serviceName });
+      showToast("已删除", "success");
+      await refreshApiKeys();
+    } catch (error) {
+      console.error("[Settings] 删除 API Key 失败:", error);
+      showToast("删除失败，请重试", "error");
+    }
+  };
+
+  if (!settings) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-center">
+          <div className="text-muted-foreground mb-2">加载中...</div>
+          {loadError && <div className="text-xs text-red-500 mt-2">{loadError}</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full bg-card rounded-lg border overflow-hidden">
-      <div className="flex items-center justify-between px-6 py-4 border-b">
+      {/* 标题栏 - 固定高度 56px */}
+      <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
         <h2 className="text-lg font-semibold">设置</h2>
         <button
           onClick={onClose}
@@ -210,23 +279,24 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-56 border-r flex flex-col py-3 overflow-y-auto shrink-0">
-              {navGroups.map((group, groupIndex) => (
-              <div key={group.title} className="mb-1">
-                {groupIndex > 0 && <div className="border-t border-border/50 my-3" />}
-                <div className="px-3 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  {group.title}
-                </div>
-                {group.items.map((item) => (
+        {/* 左侧导航 - 固定宽度 224px */}
+        <div className="w-56 border-r flex flex-col py-4 overflow-y-auto shrink-0 bg-muted/20">
+          {navGroups.map((group, groupIndex) => (
+            <div key={group.title} className="mb-2">
+              {groupIndex > 0 && <div className="border-t border-border/50 mx-3 my-3" />}
+              <div className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                {group.title}
+              </div>
+              {group.items.map((item) => (
                 <button
                   key={item.id}
                   onClick={() => {
                     setActiveNavId(item.id);
                     scrollToSection(item.sectionId);
                   }}
-                  className={`w-full text-left px-3 py-2 text-sm transition-colors ${
+                  className={`w-full text-left px-3 py-2.5 text-sm transition-colors ${
                     activeNavId === item.id
-                      ? "bg-primary/10 text-primary font-medium"
+                      ? "bg-primary/10 text-primary font-medium border-l-2 border-primary"
                       : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                   }`}
                 >
@@ -237,308 +307,419 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           ))}
         </div>
 
-        <div ref={contentRef} className="flex-1 overflow-y-auto p-6 space-y-6">
-          <div id="section-general" ref={(el) => { sectionRefs.current["section-general"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">开机自启</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">系统启动时自动运行</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={settings.general.launchAtStartup}
-                onChange={(e) => updateGeneral("launchAtStartup", e.target.checked)}
-                className="h-4 w-4"
-              />
-            </div>
-          </div>
-
-          <div id="section-close-behavior" ref={(el) => { sectionRefs.current["section-close-behavior"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">关闭行为</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">点击关闭按钮时的行为</div>
-              </div>
-              <select
-                value={settings.general.closeBehavior}
-                onChange={(e) => updateGeneral("closeBehavior", e.target.value)}
-                className="w-full px-3 py-2 border rounded-md text-sm"
+        {/* 右侧内容区 */}
+        <div ref={contentRef} className="flex-1 overflow-y-auto p-8 flex justify-center">
+          <div className="w-full max-w-xl">
+            
+            {/* ========== 通用设置 ========== */}
+            <div className="mb-10">
+              <h3 className="text-base font-semibold mb-4 text-foreground">通用</h3>
+              
+              {/* 开机自启 */}
+              <div 
+                id="section-general" 
+                ref={(el) => { sectionRefs.current["section-general"] = el; }}
+                className="flex items-center justify-between py-3 border-b border-border/50 last:border-0"
               >
-                <option value="minimizeToTray">最小化到托盘</option>
-                <option value="exit">退出程序</option>
-              </select>
-            </div>
-          </div>
-
-          <div id="section-auto-update" ref={(el) => { sectionRefs.current["section-auto-update"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">自动更新</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">检查并安装更新</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={settings.general.checkUpdates}
-                onChange={(e) => updateGeneral("checkUpdates", e.target.checked)}
-                className="h-4 w-4"
-              />
-            </div>
-          </div>
-
-          <hr className="border-border/50 my-4" />
-
-          <div id="section-source-lang" ref={(el) => { sectionRefs.current["section-source-lang"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">默认源语言</h3>
-            <select
-              value={settings.translation.defaultSourceLang}
-              onChange={(e) => updateTranslation("defaultSourceLang", e.target.value)}
-              className="w-full mt-2 px-3 py-2 border rounded-md text-sm"
-            >
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div id="section-target-lang" ref={(el) => { sectionRefs.current["section-target-lang"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">默认目标语言</h3>
-            <select
-              value={settings.translation.defaultTargetLang}
-              onChange={(e) => updateTranslation("defaultTargetLang", e.target.value)}
-              className="w-full mt-2 px-3 py-2 border rounded-md text-sm"
-            >
-              {SUPPORTED_LANGUAGES.map((lang) => (
-                <option key={lang.code} value={lang.code}>{lang.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div id="section-default-engine" ref={(el) => { sectionRefs.current["section-default-engine"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">默认翻译引擎</h3>
-            <select
-              value={settings.translation.defaultEngine}
-              onChange={(e) => updateTranslation("defaultEngine", e.target.value)}
-              className="w-full mt-2 px-3 py-2 border rounded-md text-sm"
-            >
-              {ENGINE_OPTIONS.map((engine) => (
-                <option key={engine.value} value={engine.value}>{engine.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div id="section-api-keys" ref={(el) => { sectionRefs.current["section-api-keys"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">API Key</h3>
-            <div className="space-y-3">
-              {ENGINE_OPTIONS.map((engine) => (
-                <div key={engine.value} className="space-y-1">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium">{engine.label}:</span>
-                    <MaskedKeyInput
-                      value={settings.translation.apiKeys[engine.value]}
-                      onChange={(v) => updateTranslation("apiKeys", { ...settings.translation.apiKeys, [engine.value]: v })}
-                    />
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {engine.label === "google" ? "获取方式: Google AI Studio" : engine.label === "deepl" ? "获取方式: DeepL Developer Portal" : engine.label === "baidu" ? "获取方式: Baidu AI Cloud" : "获取方式: 有道开放平台"}
-                  </div>
+                <div>
+                  <div className="text-sm font-medium text-foreground">开机自启</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">系统启动时自动运行</div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div id="section-auto-detect" ref={(el) => { sectionRefs.current["section-auto-detect"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">自动检测语言</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">自动识别源语言</div>
+                <input
+                  type="checkbox"
+                  checked={settings.general.launchAtStartup}
+                  onChange={(e) => updateSetting("general", "launchAtStartup", e.target.checked)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                />
               </div>
-              <input
-                type="checkbox"
-                checked={settings.translation.autoDetect}
-                onChange={(e) => updateTranslation("autoDetect", e.target.checked)}
-                className="h-4 w-4"
-              />
-            </div>
-          </div>
 
-          <hr className="border-border/50 my-4" />
-
-          <div id="section-llm-endpoint" ref={(el) => { sectionRefs.current["section-llm-endpoint"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">模型请求地址</h3>
-            <input
-              type="text"
-              value={settings.llm.endpoint}
-              onChange={(e) => updateLlm("endpoint", e.target.value)}
-              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
-              placeholder="http://localhost:11434/api/generate"
-            />
-          </div>
-
-          <div id="section-llm-key" ref={(el) => { sectionRefs.current["section-llm-key"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">模型 API Key</h3>
-            <MaskedKeyInput
-              value={settings.llm.apiKey}
-              onChange={(v) => updateLlm("apiKey", v)}
-            />
-          </div>
-
-          <hr className="border-border/50 my-4" />
-
-          <div id="section-theme" ref={(el) => { sectionRefs.current["section-theme"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">主题</h3>
-            <select
-              value={settings.appearance.theme}
-              onChange={(e) => updateAppearance("theme", e.target.value)}
-              className="w-full mt-2 px-3 py-2 border rounded-md text-sm"
-            >
-              <option value="light">浅色</option>
-              <option value="dark">深色</option>
-              <option value="system">跟随系统</option>
-            </select>
-          </div>
-
-          <div id="section-font-size" ref={(el) => { sectionRefs.current["section-font-size"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">字体大小</h3>
-            <select
-              value={settings.appearance.fontSize}
-              onChange={(e) => updateAppearance("fontSize", e.target.value)}
-              className="w-full mt-2 px-3 py-2 border rounded-md text-sm"
-            >
-              <option value="small">小</option>
-              <option value="medium">中</option>
-              <option value="large">大</option>
-            </select>
-          </div>
-
-          <div id="section-opacity" ref={(el) => { sectionRefs.current["section-opacity"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">不透明度: {settings.appearance.opacity}%</h3>
-            <input
-              type="range"
-              min="50"
-              max="100"
-              value={settings.appearance.opacity}
-              onChange={(e) => updateAppearance("opacity", parseInt(e.target.value))}
-              className="w-full mt-2"
-            />
-          </div>
-
-          <div id="section-dict-dir" ref={(el) => { sectionRefs.current["section-dict-dir"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">词典目录</h3>
-            <input
-              type="file"
-              {...({ webkitdirectory: true, directory: "" } as any)}
-              value={settings.appearance.dictionaryDirectory || ""}
-              onChange={(e) => updateAppearance("dictionaryDirectory", e.target.value)}
-              className="w-full px-2 py-2 border rounded-md text-sm mt-1"
-            />
-          </div>
-
-          <div id="section-hide-delay" ref={(el) => { sectionRefs.current["section-hide-delay"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">自动隐藏延迟</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">鼠标离开弹窗后自动隐藏</div>
-              </div>
-              <select
-                value={settings.appearance.hideDelay}
-                onChange={(e) => updateAppearance("hideDelay", Number(e.target.value))}
-                className="w-full px-3 py-2 border rounded-md text-sm"
+              {/* 关闭行为 */}
+              <div 
+                id="section-close-behavior" 
+                ref={(el) => { sectionRefs.current["section-close-behavior"] = el; }}
+                className="flex items-center justify-between py-3 border-b border-border/50"
               >
-                <option value={0}>不隐藏</option>
-                <option value={3}>3 秒</option>
-                <option value={5}>5 秒</option>
-                <option value={10}>10 秒</option>
-              </select>
-            </div>
-          </div>
+                <div>
+                  <div className="text-sm font-medium text-foreground">关闭行为</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">点击关闭按钮时的行为</div>
+                </div>
+                <select
+                  value={settings.general.closeBehavior}
+                  onChange={(e) => updateSetting("general", "closeBehavior", e.target.value)}
+                  className="px-3 py-1.5 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="minimizeToTray">最小化到托盘</option>
+                  <option value="exit">退出程序</option>
+                </select>
+              </div>
 
-          <div id="section-dict-order" ref={(el) => { sectionRefs.current["section-dict-order"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">词典显示顺序</h3>
-            <div className="space-y-2">
-              {settings.appearance.dictionaryOrder.map((dictIndex, sortIndex) => {
-                const engine = ENGINE_OPTIONS[dictIndex];
-                return (
-                  <div
-                    key={engine.value}
-                    draggable
-                    onDragStart={(e) => {
-                      e.dataTransfer.setData("text/plain", String(dictIndex));
-                      e.dataTransfer.effectAllowed = "move";
-                    }}
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }}
-                    onDrop={(e) => {
-                      e.preventDefault();
-                      const fromDictIndex = Number(e.dataTransfer.getData("text/plain"));
-                      const fromPos = settings.appearance.dictionaryOrder.indexOf(fromDictIndex);
-                      if (fromPos === -1 || fromPos === sortIndex) return;
-                      const order = [...settings.appearance.dictionaryOrder];
-                      const [moved] = order.splice(fromPos, 1);
-                      order.splice(sortIndex, 0, moved);
-                      updateAppearance("dictionaryOrder", order);
-                    }}
-                    className="flex items-center justify-between px-3 py-2 border rounded-md cursor-grab active:cursor-grabbing hover:bg-muted/30 transition-colors"
+              {/* 自动更新 */}
+              <div 
+                id="section-auto-update" 
+                ref={(el) => { sectionRefs.current["section-auto-update"] = el; }}
+                className="flex items-center justify-between py-3"
+              >
+                <div>
+                  <div className="text-sm font-medium text-foreground">自动更新</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">检查并安装更新</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.general.checkUpdates}
+                  onChange={(e) => updateSetting("general", "checkUpdates", e.target.checked)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                />
+              </div>
+            </div>
+
+            {/* ========== 翻译设置 ========== */}
+            <div className="mb-10">
+              <h3 className="text-base font-semibold mb-4 text-foreground">翻译</h3>
+              
+              {/* 默认源语言 */}
+              <div 
+                id="section-source-lang" 
+                ref={(el) => { sectionRefs.current["section-source-lang"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">默认源语言</div>
+                <select
+                  value={settings.translation.defaultSourceLang}
+                  onChange={(e) => updateSetting("translation", "defaultSourceLang", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {SUPPORTED_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>{lang.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 默认目标语言 */}
+              <div 
+                id="section-target-lang" 
+                ref={(el) => { sectionRefs.current["section-target-lang"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">默认目标语言</div>
+                <select
+                  value={settings.translation.defaultTargetLang}
+                  onChange={(e) => updateSetting("translation", "defaultTargetLang", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {SUPPORTED_LANGUAGES.map((lang) => (
+                    <option key={lang.code} value={lang.code}>{lang.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 默认翻译引擎 */}
+              <div 
+                id="section-default-engine" 
+                ref={(el) => { sectionRefs.current["section-default-engine"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">默认翻译引擎</div>
+                <select
+                  value={settings.translation.defaultEngine}
+                  onChange={(e) => updateSetting("translation", "defaultEngine", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  {apiKeys.length === 0 ? (
+                    <option value="">暂无已配置的翻译服务</option>
+                  ) : (
+                    apiKeys.map((item) => (
+                      <option key={item.service_name} value={item.service_name}>
+                        {item.display_name}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* API Key：数据库真实数据展示 */}
+              <div 
+                id="section-api-keys" 
+                ref={(el) => { sectionRefs.current["section-api-keys"] = el; }}
+                className="py-4 border-b border-border/50"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="text-sm font-medium text-foreground">翻译服务 API Key</div>
+                  <button
+                    onClick={() => setShowAddModal(true)}
+                    className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 shrink-0"
+                    title="添加翻译服务"
                   >
-                    <div className="flex items-center gap-2">
-                      <span className="text-muted-foreground text-xs">⠿</span>
-                      <span className="font-medium">{engine.label}</span>
-                    </div>
-                    <span className="text-xs text-muted-foreground">#{sortIndex + 1}</span>
+                    + 添加
+                  </button>
+                </div>
+
+                {apiKeys.length === 0 ? (
+                  <div className="text-center text-sm text-muted-foreground py-6 border border-dashed rounded-md">
+                    暂无已配置的翻译服务，点击「+ 添加」创建
                   </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <hr className="border-border/50 my-4" />
-
-          <div id="section-shortcut-translate" ref={(el) => { sectionRefs.current["section-shortcut-translate"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">翻译快捷键</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">选中文本后触发翻译</div>
+                ) : (
+                  <div className="space-y-2">
+                    {apiKeys.map((item) => (
+                      <div key={item.service_name} className="flex items-center justify-between px-3 py-2.5 border rounded-md bg-background">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium truncate">{item.display_name}</span>
+                            <span className="text-xs text-muted-foreground shrink-0">(排序 {item.sort})</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5 font-mono truncate">
+                            ID: {item.app_id || "—"} · Key: {item.api_key ? "••••" + item.api_key.slice(-4) : "—"}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDeleteApiKey(item.service_name)}
+                          className="ml-2 px-2 py-1 text-xs border rounded hover:bg-destructive hover:text-white shrink-0"
+                          title="删除此服务"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-              <ShortcutRecorder
-                value={shortcuts.translate}
-                onChange={(value) => {
-                  const updated = { ...shortcuts, translate: value };
-                  setShortcuts(updated);
-                  invoke("update_shortcuts_cmd", { config: updated });
-                }}
-                disabled={!shortcutsLoaded}
-              />
-            </div>
-          </div>
 
-          <div id="section-shortcut-show-main" ref={(el) => { sectionRefs.current["section-shortcut-show-main"] = el; }}>
-            <h3 className="font-semibold text-base mb-3">显示主窗口</h3>
-            <div className="flex items-center justify-between py-3">
-              <div>
-                <div className="text-sm text-muted-foreground">快速唤起主窗口</div>
+              {/* 自动检测语言 */}
+              <div 
+                id="section-auto-detect" 
+                ref={(el) => { sectionRefs.current["section-auto-detect"] = el; }}
+                className="flex items-center justify-between py-3"
+              >
+                <div>
+                  <div className="text-sm font-medium text-foreground">自动检测语言</div>
+                  <div className="text-xs text-muted-foreground mt-0.5">自动识别源语言</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={settings.translation.autoDetect}
+                  onChange={(e) => updateSetting("translation", "autoDetect", e.target.checked)}
+                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                />
               </div>
-              <ShortcutRecorder
-                value={shortcuts.show_main}
-                onChange={(value) => {
-                  const updated = { ...shortcuts, show_main: value };
-                  setShortcuts(updated);
-                  invoke("update_shortcuts_cmd", { config: updated });
-                }}
-                disabled={!shortcutsLoaded}
-              />
             </div>
+
+            {/* ========== 外观设置 ========== */}
+            <div className="mb-10">
+              <h3 className="text-base font-semibold mb-4 text-foreground">外观</h3>
+              
+              {/* 主题 */}
+              <div 
+                id="section-theme" 
+                ref={(el) => { sectionRefs.current["section-theme"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">主题</div>
+                <select
+                  value={settings.appearance.theme}
+                  onChange={(e) => updateSetting("appearance", "theme", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="light">浅色</option>
+                  <option value="dark">深色</option>
+                  <option value="system">跟随系统</option>
+                </select>
+              </div>
+
+              {/* 字体大小 */}
+              <div 
+                id="section-font-size" 
+                ref={(el) => { sectionRefs.current["section-font-size"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">字体大小</div>
+                <select
+                  value={settings.appearance.fontSize}
+                  onChange={(e) => updateSetting("appearance", "fontSize", e.target.value)}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value="small">小</option>
+                  <option value="medium">中</option>
+                  <option value="large">大</option>
+                </select>
+              </div>
+
+              <div 
+                id="section-opacity" 
+                ref={(el) => { sectionRefs.current["section-opacity"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">不透明度: {settings.appearance.opacity}%</div>
+                <input
+                  type="range"
+                  min="50"
+                  max="100"
+                  value={settings.appearance.opacity}
+                  onChange={(e) => updateSetting("appearance", "opacity", parseInt(e.target.value))}
+                  className="w-full mt-2"
+                />
+              </div>
+
+              {/* 自动隐藏延迟 */}
+              <div 
+                id="section-hide-delay" 
+                ref={(el) => { sectionRefs.current["section-hide-delay"] = el; }}
+                className="py-3"
+              >
+                <div className="text-sm font-medium text-foreground mb-2">自动隐藏延迟</div>
+                <div className="text-xs text-muted-foreground mb-2">鼠标离开弹窗后自动隐藏</div>
+                <select
+                  value={settings.appearance.hideDelay}
+                  onChange={(e) => updateSetting("appearance", "hideDelay", Number(e.target.value))}
+                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <option value={0}>不隐藏</option>
+                  <option value={3}>3 秒</option>
+                  <option value={5}>5 秒</option>
+                  <option value={10}>10 秒</option>
+                </select>
+              </div>
+            </div>
+
+            {/* ========== 快捷键设置 ========== */}
+            <div className="mb-10">
+              <h3 className="text-base font-semibold mb-4 text-foreground">快捷键</h3>
+              
+              {/* 翻译快捷键 */}
+              <div
+                id="section-shortcut-translate"
+                ref={(el) => { sectionRefs.current["section-shortcut-translate"] = el; }}
+                className="py-3 border-b border-border/50"
+              >
+                <div className="text-sm font-medium text-foreground mb-1">翻译快捷键</div>
+                <div className="text-xs text-muted-foreground mb-3">双击目标键触发翻译</div>
+                <ShortcutRecorder
+                  value={shortcuts.translate}
+                  onChange={(value) => {
+                    const updated = { ...shortcuts, translate: value };
+                    setShortcuts(updated);
+                    invoke("update_shortcuts_cmd", { config: updated });
+                  }}
+                  disabled={!shortcutsLoaded}
+                />
+              </div>
+
+              {/* 显示主窗口 */}
+              <div 
+                id="section-shortcut-show-main" 
+                ref={(el) => { sectionRefs.current["section-shortcut-show-main"] = el; }}
+                className="py-3"
+              >
+                <div className="text-sm font-medium text-foreground mb-1">显示主窗口</div>
+                <div className="text-xs text-muted-foreground mb-3">快速唤起主窗口</div>
+                <ShortcutRecorder
+                  value={shortcuts.show_main}
+                  onChange={(value) => {
+                    const updated = { ...shortcuts, show_main: value };
+                    setShortcuts(updated);
+                    invoke("update_shortcuts_cmd", { config: updated });
+                  }}
+                  disabled={!shortcutsLoaded}
+                />
+              </div>
+            </div>
+
+            <div className="pt-6 pb-2">
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="w-full px-4 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {saving ? "保存中..." : "保存设置"}
+              </button>
+            </div>
+
           </div>
         </div>
       </div>
 
-      <div className="px-6 py-4 border-t">
-        <button
-          onClick={onClose}
-          className="w-full px-4 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium"
-        >
-          保存设置
-        </button>
+      {/* 添加 API Key 弹窗 */}
+      <AddKeyModal
+        open={showAddModal}
+        onClose={() => setShowAddModal(false)}
+        onConfirm={handleAddApiKey}
+      />
+    </div>
+  );
+}
+
+function AddKeyModal({ open, onClose, onConfirm }: {
+  open: boolean;
+  onClose: () => void;
+  onConfirm: (name: string, appId: string, key: string, sort: number) => Promise<void>;
+}) {
+  const [newName, setNewName] = useState("");
+  const [newId, setNewId] = useState("");
+  const [newKey, setNewKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  if (!open) return null;
+
+  const handleConfirm = async () => {
+    if (!newName.trim() || !newKey.trim()) return;
+    setSubmitting(true);
+    try {
+      await onConfirm(newName, newId, newKey, 0);
+      setNewName("");
+      setNewId("");
+      setNewKey("");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-card rounded-lg p-6 w-full max-w-md shadow-2xl">
+        <h3 className="text-base font-semibold mb-4 text-foreground">添加翻译服务</h3>
+        <div className="space-y-4 mb-6">
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">名称（必填，作为服务标识）</label>
+            <input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="例如: 百度翻译 / 彩云 / 自定义"
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">ID（可选，百度/阿里/火山需要）</label>
+            <input
+              value={newId}
+              onChange={(e) => setNewId(e.target.value)}
+              placeholder="例如: 百度 AppID"
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">Key（必填）</label>
+            <input
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              placeholder="粘贴或输入 Key"
+              type="password"
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 border rounded-md text-sm hover:bg-muted"
+          >
+            取消
+          </button>
+          <button
+            onClick={handleConfirm}
+            disabled={!newName.trim() || !newKey.trim() || submitting}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            确认
+          </button>
+        </div>
       </div>
     </div>
   );

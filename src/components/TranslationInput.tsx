@@ -1,20 +1,20 @@
 import { useState } from "react";
-import { SUPPORTED_LANGUAGES, ENGINE_OPTIONS } from "@/types/translation";
+import { SUPPORTED_LANGUAGES } from "@/types/translation";
 import type { Language, TranslationEngine } from "@/types/translation";
 
 interface TranslationInputProps {
   onTranslate?: (text: string, sourceLang: Language, targetLang: Language, engine: TranslationEngine) => void;
   defaultText?: string;
+  engine?: TranslationEngine;
 }
 
-export function TranslationInput({ onTranslate, defaultText }: TranslationInputProps) {
+export function TranslationInput({ onTranslate, defaultText, engine }: TranslationInputProps) {
   const [text, setText] = useState(defaultText || "");
   const [sourceLang, setSourceLang] = useState<Language>("en");
   const [targetLang, setTargetLang] = useState<Language>("zh");
-  const [engine, setEngine] = useState<TranslationEngine>("google");
 
   const handleTranslate = () => {
-    if (text.trim()) {
+    if (text.trim() && engine) {
       onTranslate?.(text.trim(), sourceLang, targetLang, engine);
     }
   };
@@ -56,17 +56,6 @@ export function TranslationInput({ onTranslate, defaultText }: TranslationInputP
             </option>
           ))}
         </select>
-        <select
-          value={engine}
-          onChange={(e) => setEngine(e.target.value as TranslationEngine)}
-          className="px-3 py-2 text-sm border rounded-md"
-        >
-          {ENGINE_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>
-              {opt.label}
-            </option>
-          ))}
-        </select>
       </div>
 
       <div className="flex-1 p-3">
@@ -81,7 +70,7 @@ export function TranslationInput({ onTranslate, defaultText }: TranslationInputP
       <div className="p-3 border-t">
         <button
           onClick={handleTranslate}
-          disabled={!text.trim()}
+          disabled={!text.trim() || !engine}
           className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           翻译

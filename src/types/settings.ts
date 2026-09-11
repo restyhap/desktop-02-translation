@@ -26,7 +26,6 @@ export interface TranslationSettings {
   defaultEngine: TranslationEngine;
   autoDetect: boolean;
   pasteToTranslate: boolean;
-  apiKeys: Record<TranslationEngine, string>;
 }
 
 export interface AppearanceSettings {
@@ -34,8 +33,6 @@ export interface AppearanceSettings {
   fontSize: "small" | "medium" | "large";
   opacity: number;
   hideDelay: number;
-  dictionaryDirectory: string;
-  dictionaryOrder: number[];
 }
 
 export interface ShortcutSettings {
@@ -56,20 +53,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultEngine: "google",
     autoDetect: true,
     pasteToTranslate: false,
-    apiKeys: {
-      google: "",
-      deepl: "",
-      baidu: "",
-      youdao: "",
-    },
   },
   appearance: {
     theme: "system",
     fontSize: "medium",
     opacity: 100,
     hideDelay: 5,
-    dictionaryDirectory: "",
-    dictionaryOrder: [0, 1, 2, 3],
   },
   shortcuts: {
     translate: "Ctrl+C+C",

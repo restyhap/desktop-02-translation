@@ -1,14 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import { ToastProvider } from "./components/ui/Toast";
 import "./styles.css";
 
-function render() {
-  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-    <React.StrictMode>
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <ToastProvider>
       <App />
-    </React.StrictMode>
-  );
-}
-
-render();
+    </ToastProvider>
+  </React.StrictMode>
+);

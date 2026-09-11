@@ -1,11 +1,12 @@
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
+use std::env;
 
 const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
 
 struct State {
-    cmd_held: bool,
-    last_c: Instant,
+    key_to_detect: String,
+    last_press: Instant,
     count: u32,
     last_mouse_pos: Option<(f64, f64)>,
 }
@@ -13,52 +14,85 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            cmd_held: false,
-            last_c: Instant::now() - DOUBLE_TAP_WINDOW,
+            key_to_detect: "C".to_string(),
+            last_press: Instant::now() - DOUBLE_TAP_WINDOW,
             count: 0,
             last_mouse_pos: None,
         }
     }
 }
 
+fn parse_key(key_str: &str) -> Option<rdev::Key> {
+    match key_str.to_uppercase().as_str() {
+        "A" => Some(rdev::Key::KeyA),
+        "B" => Some(rdev::Key::KeyB),
+        "C" => Some(rdev::Key::KeyC),
+        "D" => Some(rdev::Key::KeyD),
+        "E" => Some(rdev::Key::KeyE),
+        "F" => Some(rdev::Key::KeyF),
+        "G" => Some(rdev::Key::KeyG),
+        "H" => Some(rdev::Key::KeyH),
+        "I" => Some(rdev::Key::KeyI),
+        "J" => Some(rdev::Key::KeyJ),
+        "K" => Some(rdev::Key::KeyK),
+        "L" => Some(rdev::Key::KeyL),
+        "M" => Some(rdev::Key::KeyM),
+        "N" => Some(rdev::Key::KeyN),
+        "O" => Some(rdev::Key::KeyO),
+        "P" => Some(rdev::Key::KeyP),
+        "Q" => Some(rdev::Key::KeyQ),
+        "R" => Some(rdev::Key::KeyR),
+        "S" => Some(rdev::Key::KeyS),
+        "T" => Some(rdev::Key::KeyT),
+        "U" => Some(rdev::Key::KeyU),
+        "V" => Some(rdev::Key::KeyV),
+        "W" => Some(rdev::Key::KeyW),
+        "X" => Some(rdev::Key::KeyX),
+        "Y" => Some(rdev::Key::KeyY),
+        "Z" => Some(rdev::Key::KeyZ),
+        _ => None,
+    }
+}
+
 fn main() {
-    let mut state = State::default();
+    let args: Vec<String> = env::args().collect();
+    let key_config = if args.len() > 1 {
+        args[1].clone()
+    } else {
+        "C".to_string()
+    };
+
+    let mut state = State {
+        key_to_detect: key_config,
+        ..State::default()
+    };
     let mut stdout = io::stdout();
 
-    eprintln!("[hook] keyboard-hook started, PID={}", std::process::id());
+    eprintln!("[hook] keyboard-hook started, key={}", state.key_to_detect);
 
     if let Err(e) = rdev::listen(move |event| {
         match event.event_type {
-            rdev::EventType::KeyPress(rdev::Key::MetaLeft | rdev::Key::MetaRight) => {
-                state.cmd_held = true;
-                eprintln!("[hook] Cmd DOWN, count={}", state.count);
-            }
-            rdev::EventType::KeyRelease(rdev::Key::MetaLeft | rdev::Key::MetaRight) => {
-                eprintln!("[hook] Cmd UP, resetting state");
-                state.cmd_held = false;
-                state.count = 0;
-            }
-            rdev::EventType::KeyPress(rdev::Key::KeyC) if state.cmd_held => {
-                let now = Instant::now();
-                let gap = now.duration_since(state.last_c);
-                if gap < DOUBLE_TAP_WINDOW {
-                    state.count += 1;
-                } else {
-                    state.count = 1;
-                }
-                state.last_c = now;
+            rdev::EventType::KeyPress(key) => {
+                if let Some(target_key) = parse_key(&state.key_to_detect) {
+                    if key == target_key {
+                        let now = Instant::now();
+                        let gap = now.duration_since(state.last_press);
+                        
+                        if gap < DOUBLE_TAP_WINDOW {
+                            state.count += 1;
+                        } else {
+                            state.count = 1;
+                        }
+                        state.last_press = now;
 
-                eprintln!(
-                    "[hook] C press, count={}, gap={:?}",
-                    state.count, gap
-                );
-
-                if state.count >= 2 {
-                    state.count = 0;
-                    eprintln!("[hook] >>> SENDING TRANSLATE");
-                    let (x, y) = state.last_mouse_pos.unwrap_or((0.0, 0.0));
-                    let _ = writeln!(stdout, "TRANSLATE {} {}", x, y);
-                    let _ = stdout.flush();
+                        if state.count >= 2 {
+                            state.count = 0;
+                            eprintln!("[hook] >>> SENDING TRANSLATE");
+                            let (x, y) = state.last_mouse_pos.unwrap_or((0.0, 0.0));
+                            let _ = writeln!(stdout, "TRANSLATE {} {}", x, y);
+                            let _ = stdout.flush();
+                        }
+                    }
                 }
             }
             rdev::EventType::MouseMove { x, y } => {

@@ -1,6 +1,31 @@
 export type Language = "zh" | "en" | "ja" | "ko" | "fr" | "de" | "es" | "ru";
 
-export type TranslationEngine = "google" | "deepl" | "baidu" | "youdao";
+/**
+ * 翻译引擎标识：自定义字符串，由 api_keys 表驱动
+ * 用户可在设置中自定义添加翻译机制（如 baidu / caiyun / 自定义名称）
+ */
+export type TranslationEngine = string;
+
+/** api_keys 表记录（与 Rust 端 ApiKeyRecord 对齐） */
+export interface ApiKeyRecord {
+  service_name: string;
+  display_name: string;
+  app_id?: string | null;
+  api_key: string;
+  sort: number;
+}
+
+/** 数据库查询结果：translation_history 表记录 */
+export interface TranslationRecord {
+  id: string;
+  source_text: string;
+  translated_text: string;
+  source_lang: string;
+  target_lang: string;
+  engine: string;
+  timestamp: number;
+  favorite: number;
+}
 
 export interface TranslationResult {
   id: string;
@@ -40,11 +65,4 @@ export const SUPPORTED_LANGUAGES: LanguageOption[] = [
   { code: "de", name: "Deutsch", nativeName: "Deutsch" },
   { code: "es", name: "Español", nativeName: "Español" },
   { code: "ru", name: "Русский", nativeName: "Русский" },
-];
-
-export const ENGINE_OPTIONS: { value: TranslationEngine; label: string }[] = [
-  { value: "google", label: "Google 翻译" },
-  { value: "deepl", label: "DeepL" },
-  { value: "baidu", label: "百度翻译" },
-  { value: "youdao", label: "有道翻译" },
 ];
