@@ -102,7 +102,8 @@ fn main() {
 }
 
 fn parse_key(key_str: &str) -> Option<rdev::Key> {
-    match key_str.to_uppercase().as_str() {
+    let upper = key_str.to_uppercase();
+    match upper.as_str() {
         "A" => Some(rdev::Key::KeyA),
         "B" => Some(rdev::Key::KeyB),
         "C" => Some(rdev::Key::KeyC),
@@ -129,6 +130,42 @@ fn parse_key(key_str: &str) -> Option<rdev::Key> {
         "X" => Some(rdev::Key::KeyX),
         "Y" => Some(rdev::Key::KeyY),
         "Z" => Some(rdev::Key::KeyZ),
+        "0" => Some(rdev::Key::Num0),
+        "1" => Some(rdev::Key::Num1),
+        "2" => Some(rdev::Key::Num2),
+        "3" => Some(rdev::Key::Num3),
+        "4" => Some(rdev::Key::Num4),
+        "5" => Some(rdev::Key::Num5),
+        "6" => Some(rdev::Key::Num6),
+        "7" => Some(rdev::Key::Num7),
+        "8" => Some(rdev::Key::Num8),
+        "9" => Some(rdev::Key::Num9),
+        "F1" => Some(rdev::Key::F1),
+        "F2" => Some(rdev::Key::F2),
+        "F3" => Some(rdev::Key::F3),
+        "F4" => Some(rdev::Key::F4),
+        "F5" => Some(rdev::Key::F5),
+        "F6" => Some(rdev::Key::F6),
+        "F7" => Some(rdev::Key::F7),
+        "F8" => Some(rdev::Key::F8),
+        "F9" => Some(rdev::Key::F9),
+        "F10" => Some(rdev::Key::F10),
+        "F11" => Some(rdev::Key::F11),
+        "F12" => Some(rdev::Key::F12),
+        "SPACE" => Some(rdev::Key::Space),
+        "ENTER" => Some(rdev::Key::Return),
+        "ESCAPE" => Some(rdev::Key::Escape),
+        "TAB" => Some(rdev::Key::Tab),
+        "BACKSPACE" => Some(rdev::Key::Backspace),
+        "DELETE" => Some(rdev::Key::Delete),
+        "UP" => Some(rdev::Key::UpArrow),
+        "DOWN" => Some(rdev::Key::DownArrow),
+        "LEFT" => Some(rdev::Key::LeftArrow),
+        "RIGHT" => Some(rdev::Key::RightArrow),
+        "PAGEUP" => Some(rdev::Key::PageUp),
+        "PAGEDOWN" => Some(rdev::Key::PageDown),
+        "HOME" => Some(rdev::Key::Home),
+        "END" => Some(rdev::Key::End),
         _ => None,
     }
 }

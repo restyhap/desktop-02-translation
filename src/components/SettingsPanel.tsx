@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   general: { launchAtStartup: false, closeBehavior: "minimizeToTray", checkUpdates: true, language: "zh" },
   translation: { defaultSourceLang: "en", defaultTargetLang: "zh", defaultEngine: "google", autoDetect: true, pasteToTranslate: false },
   appearance: { theme: "system", fontSize: "medium", opacity: 100, hideDelay: 5 },
-  shortcuts: { translate: "Ctrl+C+C", showMain: "Ctrl+Shift+T" },
+  shortcuts: { translate: "⌘+C+C", show_main: "Ctrl+Shift+T" },
   llm: { endpoint: "", apiKey: "" },
 };
 
@@ -93,7 +93,10 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           if (r.general) loadedSettings.general = { ...DEFAULT_SETTINGS.general, ...r.general };
           if (r.translation) loadedSettings.translation = { ...DEFAULT_SETTINGS.translation, ...r.translation };
           if (r.appearance) loadedSettings.appearance = { ...DEFAULT_SETTINGS.appearance, ...r.appearance };
-          if (r.shortcuts) loadedSettings.shortcuts = { ...DEFAULT_SETTINGS.shortcuts, ...r.shortcuts };
+          if (r.shortcuts) {
+            const sc = r.shortcuts;
+            loadedSettings.shortcuts = { ...DEFAULT_SETTINGS.shortcuts, translate: sc.translate, show_main: sc.show_main || (sc as unknown as Record<string, string>).showMain };
+          }
           if (r.llm) loadedSettings.llm = { ...DEFAULT_SETTINGS.llm, ...r.llm };
         }
         

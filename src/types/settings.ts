@@ -37,7 +37,7 @@ export interface AppearanceSettings {
 
 export interface ShortcutSettings {
   translate: string;
-  showMain: string;
+  show_main: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -61,8 +61,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     hideDelay: 5,
   },
   shortcuts: {
-    translate: "Ctrl+C+C",
-    showMain: "Ctrl+Shift+T",
+    translate: "⌘+C+C",
+    show_main: "Ctrl+Shift+T",
   },
   llm: {
     endpoint: "",

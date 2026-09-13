@@ -31,7 +31,7 @@ function TranslatePopup() {
   const [visible, setVisible] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [, setEngines] = useState<ApiKeyInfo[]>([]);
+  const [engines, setEngines] = useState<ApiKeyInfo[]>([]);
   const [currentEngine, setCurrentEngine] = useState<string>("");
   const [settings, setSettings] = useState({ sourceLang: "en" as Language, targetLang: "zh" as Language, opacity: 100, hideDelay: 5 });
   const lastTextRef = useRef<string>("");
@@ -210,7 +210,7 @@ function TranslatePopup() {
     <div
       className="popup-root relative w-full h-full rounded-2xl border border-gray-300 shadow-lg bg-card overflow-hidden"
           style={{ opacity: settings.opacity / 100 }}
-      onMouseEnter={() => { cancelHide(); scheduleHide(); }}
+      onMouseEnter={cancelHide}
       onMouseLeave={scheduleHide}
       onPointerDown={cancelHide}
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
@@ -231,7 +231,36 @@ function TranslatePopup() {
           className="title-bar flex items-center justify-between px-3 py-2 border-b select-none cursor-move shrink-0"
           onPointerDown={startDragWindow}
         >
-          <div className="flex items-center gap-2" />
+          <div className="flex items-center gap-2">
+            <span className="text-sm font-semibold">翻译</span>
+            {engines.length > 0 && (
+              <div className="flex items-center gap-1">
+                {engines.map((opt) => (
+                  <button
+                    key={opt.service_name}
+                    onClick={() => {
+                      setCurrentEngine(opt.service_name);
+                      if (lastTextRef.current) {
+                        performTranslation(lastTextRef.current, opt.service_name);
+                      }
+                    }}
+                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
+                      currentEngine === opt.service_name
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {opt.display_name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {result && (
+              <span className="text-xs px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground">
+                {result.sourceLang.toUpperCase()} → {result.targetLang.toUpperCase()}
+              </span>
+            )}
+          </div>
           <button
             onClick={handleClose}
             className="w-5 h-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
@@ -253,8 +282,11 @@ function TranslatePopup() {
               </div>
             </div>
           ) : result ? (
-            <div className="text-sm font-medium leading-relaxed text-primary">
-              {result.translatedText}
+            <div>
+              <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
+              <div className="text-sm font-medium leading-relaxed text-primary">
+                {result.translatedText}
+              </div>
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">

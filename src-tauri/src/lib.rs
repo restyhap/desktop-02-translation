@@ -153,7 +153,7 @@ fn extract_key_from_shortcut(shortcut: &str) -> String {
             key,
             "Ctrl" | "⌘" | "⇧" | "⌥" | "Command" | "Control" | "Shift" | "Alt"
         ) {
-            return key.to_uppercase().chars().next().unwrap_or('C').to_string();
+            return key.to_uppercase();
         }
     }
     "C".to_string()
