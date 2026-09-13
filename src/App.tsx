@@ -16,8 +16,10 @@ function App() {
   const [translationResult, setTranslationResult] = useState<TranslationResult | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [text, setText] = useState("");
+  const [sourceLang, setSourceLang] = useState<Language>("zh");
   const [dbError, setDbError] = useState<string | null>(null);
   const [currentEngine, setCurrentEngine] = useState<string>("");
+  const [historyVersion, setHistoryVersion] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -77,6 +79,8 @@ function App() {
         favorite: 0,
       };
       await saveTranslationHistory(translationRecord);
+      setSourceLang(sourceLang);
+      setHistoryVersion(v => v + 1);
       setTranslationResult({
         id: translationRecord.id,
         sourceText: translationRecord.source_text,
@@ -99,6 +103,8 @@ function App() {
   const handleHistorySelect = (item: TranslationResult) => {
     setTranslationResult(item);
     setText(item.sourceText);
+    setSourceLang(item.sourceLang as Language);
+    setCurrentEngine(item.engine);
   };
 
   if (dbError) {
@@ -158,14 +164,14 @@ function App() {
           </h2>
         </div>
         <div className="flex-1 overflow-hidden">
-          {sidebarTab === "history" && <HistoryList onSelect={handleHistorySelect} />}
+          {sidebarTab === "history" && <HistoryList key={historyVersion} onSelect={handleHistorySelect} />}
           {sidebarTab === "vocabulary" && <VocabularyPanel />}
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col rounded-lg overflow-hidden border">
+      <div className="flex-1 flex flex-col rounded-lg overflow-hidden border relative">
         <div className="h-1/2 border-b">
-          <TranslationInput onTranslate={handleTranslate} defaultText={text} engine={currentEngine} />
+          <TranslationInput onTranslate={handleTranslate} defaultText={text} engine={currentEngine} lang={sourceLang} />
         </div>
         <div className="h-1/2">
           <TranslationResultPanel result={translationResult} loading={translationLoading} error={translationError} currentEngine={currentEngine} onEngineChange={setCurrentEngine} />
