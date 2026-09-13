@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+
+// @tauri-apps/api 未导出 ResizeDirection，与 window.d.ts 内部定义保持一致
+type ResizeDirection =
+  | "East"
+  | "North"
+  | "NorthEast"
+  | "NorthWest"
+  | "South"
+  | "SouthEast"
+  | "SouthWest"
+  | "West";
 import { translate } from "@/storage/translation";
 import { listApiKeys, saveTranslationHistory, store } from "@/storage";
 import type { TranslationResult, TranslationRecord, Language } from "@/types/translation";
@@ -20,7 +31,7 @@ function TranslatePopup() {
   const [visible, setVisible] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [engines, setEngines] = useState<ApiKeyInfo[]>([]);
+  const [, setEngines] = useState<ApiKeyInfo[]>([]);
   const [currentEngine, setCurrentEngine] = useState<string>("");
   const [settings, setSettings] = useState({ sourceLang: "en" as Language, targetLang: "zh" as Language, opacity: 100, hideDelay: 5 });
   const lastTextRef = useRef<string>("");
@@ -28,6 +39,7 @@ function TranslatePopup() {
 
   const scheduleHide = () => {
     if (settings.hideDelay <= 0) return;
+    cancelHide();
     hideTimerRef.current = setTimeout(() => {
       getCurrentWindow().hide().catch(() => {});
     }, settings.hideDelay * 1000);
@@ -180,70 +192,17 @@ function TranslatePopup() {
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const [resizeState, setResizeState] = useState<{ dir: string; startX: number; startY: number; startW: number; startH: number } | null>(null);
-  const resizeRef = useRef(resizeState);
-  resizeRef.current = resizeState;
-
   const startDragWindow = (e: React.PointerEvent) => {
     e.preventDefault();
     getCurrentWindow().startDragging().catch(() => {});
   };
 
-  const startResize = (dir: string) => (e: React.PointerEvent) => {
+  // 原生 resize：交给 OS 处理拖拽循环，尺寸持久化由 Rust 侧 on_window_event 节流保存（settings.json，唯一数据源）
+  const startResize = (dir: ResizeDirection) => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // 同步读取当前逻辑尺寸（window.innerW/H = webview 视口 = 窗口内尺寸，无需 IPC/换算）
-    setResizeState({
-      dir,
-      startX: e.clientX,
-      startY: e.clientY,
-      startW: window.innerWidth,
-      startH: window.innerHeight,
-    });
+    getCurrentWindow().startResizeDragging(dir).catch(() => {});
   };
-
-  const rafRef = useRef(0);
-
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const rs = resizeRef.current;
-      if (!rs) return;
-      if (rafRef.current) return; // rAF 合并，避免 setSize IPC 洪泛
-
-      rafRef.current = requestAnimationFrame(() => {
-        rafRef.current = 0;
-        const cur = resizeRef.current;
-        if (!cur) return;
-        const dx = e.clientX - cur.startX;
-        const dy = e.clientY - cur.startY;
-        let w = cur.startW;
-        let h = cur.startH;
-        if (cur.dir.includes("E")) w = cur.startW + dx;
-        if (cur.dir.includes("W")) w = cur.startW - dx;
-        if (cur.dir.includes("S")) h = cur.startH + dy;
-        if (cur.dir.includes("N")) h = cur.startH - dy;
-        w = Math.max(200, Math.round(w));
-        h = Math.max(120, Math.round(h));
-        getCurrentWindow().setSize(new LogicalSize(w, h)).catch(() => {});
-      });
-    };
-    const onUp = () => {
-      setResizeState(null);
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = 0;
-      }
-    };
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp);
-    return () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-      window.removeEventListener("pointercancel", onUp);
-      if (rafRef.current) cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
 
   if (!visible) return null;
 
@@ -251,55 +210,28 @@ function TranslatePopup() {
     <div
       className="popup-root relative w-full h-full rounded-2xl border border-gray-300 shadow-lg bg-card overflow-hidden"
           style={{ opacity: settings.opacity / 100 }}
-      onMouseEnter={cancelHide}
+      onMouseEnter={() => { cancelHide(); scheduleHide(); }}
       onMouseLeave={scheduleHide}
+      onPointerDown={cancelHide}
+      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
       onKeyDown={(e) => { if (e.key === "Escape") { handleClose(); } }}
     >
-      {/* 8 个 resize 热区（每边 16px，四角 20px） */}
-      <div className="absolute top-0 left-4 right-4 h-4 cursor-n-resize z-20" onPointerDown={startResize("N")} />
-      <div className="absolute bottom-0 left-4 right-4 h-4 cursor-s-resize z-20" onPointerDown={startResize("S")} />
-      <div className="absolute right-0 top-4 bottom-4 w-4 cursor-e-resize z-20" onPointerDown={startResize("E")} />
-      <div className="absolute left-0 top-4 bottom-4 w-4 cursor-w-resize z-20" onPointerDown={startResize("W")} />
-      <div className="absolute top-0 left-0 w-5 h-5 cursor-nw-resize z-20" onPointerDown={startResize("NW")} />
-      <div className="absolute top-0 right-0 w-5 h-5 cursor-ne-resize z-20" onPointerDown={startResize("NE")} />
-      <div className="absolute bottom-0 left-0 w-5 h-5 cursor-sw-resize z-20" onPointerDown={startResize("SW")} />
-      <div className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize z-20" onPointerDown={startResize("SE")} />
+      {/* 8 个 resize 热区（每边 16px，四角 20px），原生 startResizeDragging 交给 OS 处理 */}
+      <div className="absolute top-0 left-4 right-4 h-4 cursor-n-resize z-20" onPointerDown={startResize("North")} />
+      <div className="absolute bottom-0 left-4 right-4 h-4 cursor-s-resize z-20" onPointerDown={startResize("South")} />
+      <div className="absolute right-0 top-4 bottom-4 w-4 cursor-e-resize z-20" onPointerDown={startResize("East")} />
+      <div className="absolute left-0 top-4 bottom-4 w-4 cursor-w-resize z-20" onPointerDown={startResize("West")} />
+      <div className="absolute top-0 left-0 w-5 h-5 cursor-nw-resize z-20" onPointerDown={startResize("NorthWest")} />
+      <div className="absolute top-0 right-0 w-5 h-5 cursor-ne-resize z-20" onPointerDown={startResize("NorthEast")} />
+      <div className="absolute bottom-0 left-0 w-5 h-5 cursor-sw-resize z-20" onPointerDown={startResize("SouthWest")} />
+      <div className="absolute bottom-0 right-0 w-5 h-5 cursor-se-resize z-20" onPointerDown={startResize("SouthEast")} />
 
       <div className="h-full flex flex-col overflow-hidden rounded-2xl">
         <div
           className="title-bar flex items-center justify-between px-3 py-2 border-b select-none cursor-move shrink-0"
           onPointerDown={startDragWindow}
         >
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold">翻译</span>
-            {engines.length > 0 && (
-              <div className="flex items-center gap-1">
-                {engines.map((opt) => (
-                  <button
-                    key={opt.service_name}
-                    onClick={() => {
-                      setCurrentEngine(opt.service_name);
-                      if (lastTextRef.current) {
-                        performTranslation(lastTextRef.current, opt.service_name);
-                      }
-                    }}
-                    className={`px-2 py-0.5 text-xs rounded transition-colors ${
-                      currentEngine === opt.service_name
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {opt.display_name}
-                  </button>
-                ))}
-              </div>
-            )}
-            {result && (
-              <span className="text-xs px-1.5 py-0.5 bg-muted rounded-full text-muted-foreground">
-                {result.sourceLang.toUpperCase()} → {result.targetLang.toUpperCase()}
-              </span>
-            )}
-          </div>
+          <div className="flex items-center gap-2" />
           <button
             onClick={handleClose}
             className="w-5 h-5 flex items-center justify-center rounded hover:bg-muted text-muted-foreground"
@@ -308,7 +240,7 @@ function TranslatePopup() {
           </button>
         </div>
 
-        <div className="flex-1 p-4 overflow-y-auto">
+        <div className="flex-1 p-4 overflow-y-auto min-h-0">
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-sm text-muted-foreground">翻译中...</div>
@@ -321,28 +253,14 @@ function TranslatePopup() {
               </div>
             </div>
           ) : result ? (
-            <div>
-              <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
-              <div className="text-sm font-medium leading-relaxed text-primary">
-                {result.translatedText}
-              </div>
+            <div className="text-sm font-medium leading-relaxed text-primary">
+              {result.translatedText}
             </div>
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
               选中文本后按快捷键翻译
             </div>
           )}
-        </div>
-
-        <div className="px-3 py-2 border-t flex items-center justify-between shrink-0">
-          {result && <span className="text-xs text-muted-foreground">{result.engine}</span>}
-          <span className="text-xs text-muted-foreground">{loading ? "翻译中..." : ""}</span>
-          <button
-            onClick={handleClose}
-            className="px-3 py-1 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 text-xs font-medium"
-          >
-            关闭
-          </button>
         </div>
       </div>
     </div>
