@@ -3,7 +3,7 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
-use tauri::{Emitter, Manager, LogicalPosition};
+use tauri::{Emitter, LogicalPosition, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -38,7 +38,10 @@ impl Default for GeneralConfig {
 }
 
 fn get_config_dir(app: &tauri::AppHandle) -> PathBuf {
-    let config_dir = app.path().app_config_dir().expect("failed to get app config dir");
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .expect("failed to get app config dir");
     fs::create_dir_all(&config_dir).ok();
     config_dir
 }
@@ -94,18 +97,41 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
             "⌥" => modifiers |= Modifiers::ALT,
             key if key.len() == 1 => {
                 code = Some(match key.to_uppercase().as_str() {
-                    "A" => Code::KeyA, "B" => Code::KeyB, "C" => Code::KeyC,
-                    "D" => Code::KeyD, "E" => Code::KeyE, "F" => Code::KeyF,
-                    "G" => Code::KeyG, "H" => Code::KeyH, "I" => Code::KeyI,
-                    "J" => Code::KeyJ, "K" => Code::KeyK, "L" => Code::KeyL,
-                    "M" => Code::KeyM, "N" => Code::KeyN, "O" => Code::KeyO,
-                    "P" => Code::KeyP, "Q" => Code::KeyQ, "R" => Code::KeyR,
-                    "S" => Code::KeyS, "T" => Code::KeyT, "U" => Code::KeyU,
-                    "V" => Code::KeyV, "W" => Code::KeyW, "X" => Code::KeyX,
-                    "Y" => Code::KeyY, "Z" => Code::KeyZ,
-                    "0" => Code::Digit0, "1" => Code::Digit1, "2" => Code::Digit2,
-                    "3" => Code::Digit3, "4" => Code::Digit4, "5" => Code::Digit5,
-                    "6" => Code::Digit6, "7" => Code::Digit7, "8" => Code::Digit8,
+                    "A" => Code::KeyA,
+                    "B" => Code::KeyB,
+                    "C" => Code::KeyC,
+                    "D" => Code::KeyD,
+                    "E" => Code::KeyE,
+                    "F" => Code::KeyF,
+                    "G" => Code::KeyG,
+                    "H" => Code::KeyH,
+                    "I" => Code::KeyI,
+                    "J" => Code::KeyJ,
+                    "K" => Code::KeyK,
+                    "L" => Code::KeyL,
+                    "M" => Code::KeyM,
+                    "N" => Code::KeyN,
+                    "O" => Code::KeyO,
+                    "P" => Code::KeyP,
+                    "Q" => Code::KeyQ,
+                    "R" => Code::KeyR,
+                    "S" => Code::KeyS,
+                    "T" => Code::KeyT,
+                    "U" => Code::KeyU,
+                    "V" => Code::KeyV,
+                    "W" => Code::KeyW,
+                    "X" => Code::KeyX,
+                    "Y" => Code::KeyY,
+                    "Z" => Code::KeyZ,
+                    "0" => Code::Digit0,
+                    "1" => Code::Digit1,
+                    "2" => Code::Digit2,
+                    "3" => Code::Digit3,
+                    "4" => Code::Digit4,
+                    "5" => Code::Digit5,
+                    "6" => Code::Digit6,
+                    "7" => Code::Digit7,
+                    "8" => Code::Digit8,
                     "9" => Code::Digit9,
                     _ => return Err(format!("Unsupported key: {}", key)),
                 });
@@ -123,7 +149,10 @@ fn extract_key_from_shortcut(shortcut: &str) -> String {
     let parts: Vec<&str> = shortcut.split('+').collect();
     for part in parts.iter().rev() {
         let key = part.trim();
-        if !matches!(key, "Ctrl" | "⌘" | "⇧" | "⌥" | "Command" | "Control" | "Shift" | "Alt") {
+        if !matches!(
+            key,
+            "Ctrl" | "⌘" | "⇧" | "⌥" | "Command" | "Control" | "Shift" | "Alt"
+        ) {
             return key.to_uppercase().chars().next().unwrap_or('C').to_string();
         }
     }
@@ -160,7 +189,7 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
         .unwrap_or_default();
 
     let hook_bin = exe_dir.join("keyboard-hook");
-    
+
     // 获取当前翻译快捷键配置
     let shortcuts = app.state::<Mutex<ShortcutConfig>>();
     let config = shortcuts.lock().unwrap().clone();
@@ -168,13 +197,16 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
 
     let mut cmd = Command::new(&hook_bin);
     cmd.arg(&key_arg)
-       .stdout(Stdio::piped())
-       .stderr(Stdio::piped());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("[main] keyboard-hook 启动失败: {} (路径: {:?})", e, hook_bin);
+            eprintln!(
+                "[main] keyboard-hook 启动失败: {} (路径: {:?})",
+                e, hook_bin
+            );
             return;
         }
     };
@@ -202,75 +234,91 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
         });
     }
 
-    let stdout = child_stdout.unwrap();
-    std::thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines().map_while(Result::ok) {
-            eprintln!("[main] received line: '{}'", line);
-            if line.trim() == "TRANSLATE" || line.trim().starts_with("TRANSLATE ") {
-                let text = match app.clipboard().read_text() {
-                    Ok(t) => t.trim().to_string(),
-                    Err(e) => {
-                        eprintln!("[main] clipboard read error: {}", e);
-                        String::new()
-                    }
-                };
-                let (cursor_x, cursor_y) = if line.trim() == "TRANSLATE" {
-                    (0.0, 0.0)
-                } else {
-                    let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
-                    if parts.len() >= 3 {
-                        (
-                            parts[1].trim().parse::<f64>().unwrap_or(0.0),
-                            parts[2].trim().parse::<f64>().unwrap_or(0.0),
-                        )
-                    } else {
+    if let Some(stdout) = child_stdout {
+        std::thread::spawn(move || {
+            let reader = BufReader::new(stdout);
+            for line in reader.lines().map_while(Result::ok) {
+                eprintln!("[main] received line: '{}'", line);
+                if line.trim() == "TRANSLATE" || line.trim().starts_with("TRANSLATE ") {
+                    let text = match app.clipboard().read_text() {
+                        Ok(t) => t.trim().to_string(),
+                        Err(e) => {
+                            eprintln!("[main] clipboard read error: {}", e);
+                            String::new()
+                        }
+                    };
+                    let (cursor_x, cursor_y) = if line.trim() == "TRANSLATE" {
                         (0.0, 0.0)
-                    }
-                };
-                let display_text = if text.trim().is_empty() {
-                    let last = LAST_CLIPBOARD.lock().unwrap();
-                    last.clone().unwrap_or_default()
-                } else {
-                    text.clone()
-                };
-                eprintln!("[main] display_text len={}", display_text.len());
-                if !text.trim().is_empty() {
-                    let mut last = LAST_CLIPBOARD.lock().unwrap();
-                    *last = Some(text.clone());
-                }
-                if let Some(window) = app.get_webview_window("translate") {
-                    if let Ok(Some(monitor)) = window.current_monitor() {
-                        let scale = monitor.scale_factor();
-                        let monitor_logical_width = monitor.size().width as f64 / scale;
-                        let monitor_logical_height = monitor.size().height as f64 / scale;
-                        let monitor_logical_x = monitor.position().x as f64 / scale;
-                        let monitor_logical_y = monitor.position().y as f64 / scale;
-                        let size = window.inner_size().unwrap_or(tauri::PhysicalSize::new(480, 360));
-                        let popup_logical_width = size.width as f64 / scale;
-                        let popup_logical_height = size.height as f64 / scale;
-                        let mut px = cursor_x;
-                        let mut py = cursor_y;
-                        if px + popup_logical_width > monitor_logical_x + monitor_logical_width {
-                            px = monitor_logical_x + monitor_logical_width - popup_logical_width;
+                    } else {
+                        let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
+                        if parts.len() >= 3 {
+                            (
+                                parts[1].trim().parse::<f64>().unwrap_or(0.0),
+                                parts[2].trim().parse::<f64>().unwrap_or(0.0),
+                            )
+                        } else {
+                            (0.0, 0.0)
                         }
-                        if py + popup_logical_height > monitor_logical_y + monitor_logical_height {
-                            py = monitor_logical_y + monitor_logical_height - popup_logical_height;
-                        }
-                        if px < monitor_logical_x { px = monitor_logical_x; }
-                        if py < monitor_logical_y { py = monitor_logical_y; }
-                        window.set_position(LogicalPosition::new(px, py)).unwrap_or_default();
+                    };
+                    let display_text = if text.trim().is_empty() {
+                        let last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+                        last.clone().unwrap_or_default()
+                    } else {
+                        text.clone()
+                    };
+                    eprintln!("[main] display_text len={}", display_text.len());
+                    if !text.trim().is_empty() {
+                        let mut last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+                        *last = Some(text.clone());
                     }
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                    let _ = window.emit(
-                        "show-translate",
-                        serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
-                    );
+                    if let Some(window) = app.get_webview_window("translate") {
+                        if let Ok(Some(monitor)) = window.current_monitor() {
+                            let scale = monitor.scale_factor();
+                            let monitor_logical_width = monitor.size().width as f64 / scale;
+                            let monitor_logical_height = monitor.size().height as f64 / scale;
+                            let monitor_logical_x = monitor.position().x as f64 / scale;
+                            let monitor_logical_y = monitor.position().y as f64 / scale;
+                            let size = window
+                                .inner_size()
+                                .unwrap_or(tauri::PhysicalSize::new(480, 360));
+                            let popup_logical_width = size.width as f64 / scale;
+                            let popup_logical_height = size.height as f64 / scale;
+                            let mut px = cursor_x;
+                            let mut py = cursor_y;
+                            if px + popup_logical_width > monitor_logical_x + monitor_logical_width
+                            {
+                                px =
+                                    monitor_logical_x + monitor_logical_width - popup_logical_width;
+                            }
+                            if py + popup_logical_height
+                                > monitor_logical_y + monitor_logical_height
+                            {
+                                py = monitor_logical_y + monitor_logical_height
+                                    - popup_logical_height;
+                            }
+                            if px < monitor_logical_x {
+                                px = monitor_logical_x;
+                            }
+                            if py < monitor_logical_y {
+                                py = monitor_logical_y;
+                            }
+                            window
+                                .set_position(LogicalPosition::new(px, py))
+                                .unwrap_or_default();
+                        }
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                        let _ = window.emit(
+                            "show-translate",
+                            serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
+                        );
+                    }
                 }
             }
-        }
-    });
+        });
+    } else {
+        eprintln!("[main] keyboard-hook stdout 不可用，跳过输出监听");
+    }
 
     println!("✓ keyboard-hook 子进程已启动");
 }
@@ -280,20 +328,24 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .plugin(tauri_plugin_window_state::Builder::default().with_denylist(&["translate"]).build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_denylist(&["translate"])
+                .build(),
+        )
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
 
             app.manage(KeyboardHookProcess(Mutex::new(None)));
 
-            let initial_shortcuts = load_shortcuts(&app.handle());
+            let initial_shortcuts = load_shortcuts(app.handle());
             if initial_shortcuts.show_main.is_empty() {
                 let defaults = ShortcutConfig {
                     translate: "⌘+C+C".into(),
                     show_main: "⌘+Shift+T".into(),
                 };
-                save_shortcuts(&app.handle(), &defaults);
+                save_shortcuts(app.handle(), &defaults);
                 app.manage(Mutex::new(defaults));
             } else {
                 app.manage(Mutex::new(initial_shortcuts));
@@ -302,9 +354,9 @@ pub fn run() {
             register_shortcuts(app.handle()).ok();
             spawn_keyboard_hook(app.handle().clone());
 
-            let initial_general = load_general_config(&app.handle());
+            let initial_general = load_general_config(app.handle());
             app.manage(Mutex::new(initial_general.clone()));
-            
+
             if let Some(translate_window) = app.get_webview_window("translate") {
                 // 启动时应用保存的弹窗大小（逻辑像素，跨平台/多分辨率的通用单位）
                 if let Some((w, h)) = initial_general.translate_size {
@@ -316,7 +368,8 @@ pub fn run() {
                 translate_window.on_window_event(move |event| {
                     if let tauri::WindowEvent::Resized(size) = event {
                         // 动态获取当前屏幕缩放系数（支持跨屏拖动、Retina/外接屏比例不同）
-                        let scale = handle.get_webview_window("translate")
+                        let scale = handle
+                            .get_webview_window("translate")
                             .and_then(|w| w.scale_factor().ok())
                             .unwrap_or(1.0);
                         let logical = size.to_logical::<f64>(scale);
@@ -324,8 +377,12 @@ pub fn run() {
                         if guard.elapsed() >= std::time::Duration::from_millis(400) {
                             *guard = std::time::Instant::now();
                             if let Ok(data) = fs::read_to_string(get_settings_path(&handle)) {
-                                if let Ok(mut config) = serde_json::from_str::<GeneralConfig>(&data) {
-                                    config.translate_size = Some((logical.width.max(1.0) as u32, logical.height.max(1.0) as u32));
+                                if let Ok(mut config) = serde_json::from_str::<GeneralConfig>(&data)
+                                {
+                                    config.translate_size = Some((
+                                        logical.width.max(1.0) as u32,
+                                        logical.height.max(1.0) as u32,
+                                    ));
                                     if let Ok(json) = serde_json::to_string_pretty(&config) {
                                         let _ = fs::write(get_settings_path(&handle), json);
                                     }
@@ -355,7 +412,9 @@ pub fn run() {
 
             let toggle_item = MenuItemBuilder::with_id("toggle", "显示主窗口").build(app)?;
             let quit_item = MenuItemBuilder::with_id("quit", "退出").build(app)?;
-            let menu = MenuBuilder::new(app).items(&[&toggle_item, &quit_item]).build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&toggle_item, &quit_item])
+                .build()?;
 
             TrayIconBuilder::new()
                 .menu(&menu)
@@ -401,7 +460,7 @@ pub fn run() {
             delete_vocabulary_group_cmd,
             add_vocabulary_word_cmd,
             delete_vocabulary_word_cmd,
-          ])
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -432,8 +491,7 @@ fn get_shortcuts_cmd(app: tauri::AppHandle) -> Result<ShortcutConfig, String> {
 
 #[tauri::command]
 fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Result<(), String> {
-    parse_shortcut(&config.show_main)
-        .map_err(|e| format!("显示主窗口快捷键无效: {}", e))?;
+    parse_shortcut(&config.show_main).map_err(|e| format!("显示主窗口快捷键无效: {}", e))?;
 
     save_shortcuts(&app, &config);
 
@@ -494,7 +552,14 @@ fn add_api_key_cmd(
 ) -> Result<(), String> {
     let display_name = display_name.unwrap_or_default();
     let app_id = app_id.as_deref();
-    keys::KeyManager::save_key(&app, &service, &display_name, app_id, &key, sort.unwrap_or(0))
+    keys::KeyManager::save_key(
+        &app,
+        &service,
+        &display_name,
+        app_id,
+        &key,
+        sort.unwrap_or(0),
+    )
 }
 
 #[tauri::command]
@@ -516,8 +581,8 @@ fn delete_api_key_cmd(app: tauri::AppHandle, service: String) -> Result<(), Stri
 async fn translate_cmd(
     app: tauri::AppHandle,
     text: String,
-    sourceLang: String,
-    targetLang: String,
+    source_lang: String,
+    target_lang: String,
     engine: String,
 ) -> Result<serde_json::Value, String> {
     // 获取 API Key 和 App ID
@@ -530,14 +595,26 @@ async fn translate_cmd(
     };
 
     let result = match engine.as_str() {
-        "google" => translation::translate_with_google(&text, &sourceLang, &targetLang, &api_key).await,
-        "deepl" => translation::translate_with_deepl(&text, &sourceLang, &targetLang, &api_key).await,
-        "baidu" => translation::translate_with_baidu(&text, &sourceLang, &targetLang, &app_id, &api_key).await,
-        "youdao" => translation::translate_with_youdao(&text, &sourceLang, &targetLang, &app_id, &api_key).await,
-        "caiyun" => translation::translate_with_caiyun(&text, &sourceLang, &targetLang, &api_key).await,
+        "google" => {
+            translation::translate_with_google(&text, &source_lang, &target_lang, &api_key).await
+        }
+        "deepl" => {
+            translation::translate_with_deepl(&text, &source_lang, &target_lang, &api_key).await
+        }
+        "baidu" => {
+            translation::translate_with_baidu(&text, &source_lang, &target_lang, &app_id, &api_key)
+                .await
+        }
+        "youdao" => {
+            translation::translate_with_youdao(&text, &source_lang, &target_lang, &app_id, &api_key)
+                .await
+        }
+        "caiyun" => {
+            translation::translate_with_caiyun(&text, &source_lang, &target_lang, &api_key).await
+        }
         _ => return Err(format!("不支持的翻译引擎: {}", engine)),
     }?;
-    
+
     Ok(serde_json::json!({
         "text": result.text,
         "source_lang": result.source_lang,
@@ -550,12 +627,13 @@ async fn translate_cmd(
 fn get_all_settings_cmd(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
-    let mut stmt = conn.prepare("SELECT key, value_json FROM app_settings")
+
+    let mut stmt = conn
+        .prepare("SELECT key, value_json FROM app_settings")
         .map_err(|e| format!("准备语句失败: {}", e))?;
-    
+
     let mut settings = serde_json::Map::new();
-    
+
     loop {
         match stmt.next() {
             Ok(sqlite::State::Row) => {
@@ -569,7 +647,7 @@ fn get_all_settings_cmd(app: tauri::AppHandle) -> Result<serde_json::Value, Stri
             Err(_) => break,
         }
     }
-    
+
     Ok(serde_json::Value::Object(settings))
 }
 
@@ -580,20 +658,39 @@ fn translate_history_cmd(
 ) -> Result<(), String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
+
     conn.execute("CREATE TABLE IF NOT EXISTS translation_history (
         id TEXT PRIMARY KEY, source_text TEXT NOT NULL, translated_text TEXT NOT NULL,
         source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, engine TEXT NOT NULL DEFAULT 'google',
         timestamp INTEGER NOT NULL DEFAULT (strftime('%s','now')), favorite INTEGER NOT NULL DEFAULT 0
     )").map_err(|e| e.to_string())?;
-    
-    let id = translation.get("id").and_then(|v| v.as_str()).ok_or(" missing id")?;
-    let source_text = translation.get("source_text").and_then(|v| v.as_str()).ok_or(" missing source_text")?;
-    let translated_text = translation.get("translated_text").and_then(|v| v.as_str()).ok_or(" missing translated_text")?;
-    let source_lang = translation.get("source_lang").and_then(|v| v.as_str()).ok_or(" missing source_lang")?;
-    let target_lang = translation.get("target_lang").and_then(|v| v.as_str()).ok_or(" missing target_lang")?;
-    let engine = translation.get("engine").and_then(|v| v.as_str()).unwrap_or("google");
-let timestamp = translation.get("timestamp")
+
+    let id = translation
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or(" missing id")?;
+    let source_text = translation
+        .get("source_text")
+        .and_then(|v| v.as_str())
+        .ok_or(" missing source_text")?;
+    let translated_text = translation
+        .get("translated_text")
+        .and_then(|v| v.as_str())
+        .ok_or(" missing translated_text")?;
+    let source_lang = translation
+        .get("source_lang")
+        .and_then(|v| v.as_str())
+        .ok_or(" missing source_lang")?;
+    let target_lang = translation
+        .get("target_lang")
+        .and_then(|v| v.as_str())
+        .ok_or(" missing target_lang")?;
+    let engine = translation
+        .get("engine")
+        .and_then(|v| v.as_str())
+        .unwrap_or("google");
+    let timestamp = translation
+        .get("timestamp")
         .and_then(|v| v.as_i64())
         .unwrap_or_else(|| {
             let start = std::time::SystemTime::now();
@@ -602,52 +699,64 @@ let timestamp = translation.get("timestamp")
                 Err(_) => 0,
             }
         });
-    let favorite = translation.get("favorite").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-    
-    let sql = format!(
-        "INSERT OR REPLACE INTO translation_history (id, source_text, translated_text, source_lang, target_lang, engine, timestamp, favorite) VALUES ('{}', '{}', '{}', '{}', '{}', '{}', {}, {})",
-        id.replace("'", "''"),
-        source_text.replace("'", "''"),
-        translated_text.replace("'", "''"),
-        source_lang.replace("'", "''"),
-        target_lang.replace("'", "''"),
-        engine.replace("'", "''"),
-        timestamp,
-        favorite
-    );
-    
-    conn.execute(&sql).map_err(|e| format!("写入翻译历史失败: {}", e))?;
-    
+    let favorite = translation
+        .get("favorite")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    let mut stmt = conn
+        .prepare(
+            "INSERT OR REPLACE INTO translation_history (id, source_text, translated_text, source_lang, target_lang, engine, timestamp, favorite) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .map_err(|e| format!("准备语句失败: {}", e))?;
+    stmt.bind((1, id))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((2, source_text))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((3, translated_text))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((4, source_lang))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((5, target_lang))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((6, engine))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((7, timestamp))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((8, favorite as i64))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.next()
+        .map_err(|e| format!("写入翻译历史失败: {}", e))?;
+
     Ok(())
 }
 
 #[tauri::command]
-fn save_all_settings_cmd(
-    app: tauri::AppHandle,
-    settings: serde_json::Value,
-) -> Result<(), String> {
+fn save_all_settings_cmd(app: tauri::AppHandle, settings: serde_json::Value) -> Result<(), String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
+
     if let serde_json::Value::Object(map) = settings {
         for (key, value) in map {
-            let json_str = serde_json::to_string(&value)
-                .map_err(|e| format!("序列化失败: {}", e))?;
-            let mut stmt = conn.prepare(
-                "INSERT OR REPLACE INTO app_settings (key, value_json) VALUES (?, ?)"
-            ).map_err(|e| format!("准备语句失败: {}", e))?;
-            stmt.bind((1, &*key)).map_err(|e| format!("绑定参数失败: {}", e))?;
-            stmt.bind((2, &*json_str)).map_err(|e| format!("绑定参数失败: {}", e))?;
+            let json_str =
+                serde_json::to_string(&value).map_err(|e| format!("序列化失败: {}", e))?;
+            let mut stmt = conn
+                .prepare("INSERT OR REPLACE INTO app_settings (key, value_json) VALUES (?, ?)")
+                .map_err(|e| format!("准备语句失败: {}", e))?;
+            stmt.bind((1, &*key))
+                .map_err(|e| format!("绑定参数失败: {}", e))?;
+            stmt.bind((2, &*json_str))
+                .map_err(|e| format!("绑定参数失败: {}", e))?;
             stmt.next().map_err(|e| format!("保存设置失败: {}", e))?;
         }
     }
-    
+
     Ok(())
 }
 
 // ==================== Legacy 兼容 ====================
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct TranslationRecord {
@@ -665,11 +774,11 @@ struct TranslationRecord {
 fn get_translations_cmd(app: tauri::AppHandle) -> Result<Vec<TranslationRecord>, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
+
     let mut stmt = conn.prepare(
         "SELECT id, source_text, translated_text, source_lang, target_lang, engine, timestamp, favorite FROM translation_history ORDER BY timestamp DESC"
     ).map_err(|e| format!("准备语句失败: {}", e))?;
-    
+
     let mut records = Vec::new();
     loop {
         match stmt.next() {
@@ -682,7 +791,16 @@ fn get_translations_cmd(app: tauri::AppHandle) -> Result<Vec<TranslationRecord>,
                 let engine: String = stmt.read(5).unwrap_or_default();
                 let timestamp: i64 = stmt.read(6).unwrap_or(0);
                 let favorite: i32 = stmt.read(7).unwrap_or(0.0_f64) as i32;
-                records.push(TranslationRecord { id, source_text, translated_text, source_lang, target_lang, engine, timestamp, favorite });
+                records.push(TranslationRecord {
+                    id,
+                    source_text,
+                    translated_text,
+                    source_lang,
+                    target_lang,
+                    engine,
+                    timestamp,
+                    favorite,
+                });
             }
             Ok(sqlite::State::Done) => break,
             Err(e) => return Err(format!("读取失败: {}", e)),
@@ -698,7 +816,8 @@ fn toggle_favorite_cmd(app: tauri::AppHandle, id: String) -> Result<(), String> 
     let mut stmt = conn.prepare(
         "UPDATE translation_history SET favorite = CASE WHEN favorite = 1 THEN 0 ELSE 1 END WHERE id = ?"
     ).map_err(|e| format!("准备语句失败: {}", e))?;
-    stmt.bind((1, &*id)).map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((1, &*id))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
     stmt.next().map_err(|e| format!("更新收藏失败: {}", e))?;
     Ok(())
 }
@@ -707,20 +826,30 @@ fn toggle_favorite_cmd(app: tauri::AppHandle, id: String) -> Result<(), String> 
 fn delete_translation_cmd(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    let mut stmt = conn.prepare("DELETE FROM translation_history WHERE id = ?")
+    let mut stmt = conn
+        .prepare("DELETE FROM translation_history WHERE id = ?")
         .map_err(|e| format!("准备语句失败: {}", e))?;
-    stmt.bind((1, &*id)).map_err(|e| format!("绑定参数失败: {}", e))?;
+    stmt.bind((1, &*id))
+        .map_err(|e| format!("绑定参数失败: {}", e))?;
     stmt.next().map_err(|e| format!("删除记录失败: {}", e))?;
     Ok(())
 }
 
 #[tauri::command]
-fn add_vocabulary_group_cmd(app: tauri::AppHandle, name: String, color: String) -> Result<String, String> {
+fn add_vocabulary_group_cmd(
+    app: tauri::AppHandle,
+    name: String,
+    color: String,
+) -> Result<String, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     let id = format!("grp_{}", ts);
-    let mut stmt = conn.prepare("INSERT INTO vocabulary_groups (id, name, color) VALUES (?, ?, ?)")
+    let mut stmt = conn
+        .prepare("INSERT INTO vocabulary_groups (id, name, color) VALUES (?, ?, ?)")
         .map_err(|e| format!("准备语句失败: {}", e))?;
     stmt.bind((1, &*id)).map_err(|e| e.to_string())?;
     stmt.bind((2, &*name)).map_err(|e| e.to_string())?;
@@ -733,11 +862,13 @@ fn add_vocabulary_group_cmd(app: tauri::AppHandle, name: String, color: String) 
 fn delete_vocabulary_group_cmd(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    let mut stmt1 = conn.prepare("DELETE FROM vocabulary_words WHERE group_id = ?")
+    let mut stmt1 = conn
+        .prepare("DELETE FROM vocabulary_words WHERE group_id = ?")
         .map_err(|e| format!("准备语句失败: {}", e))?;
     stmt1.bind((1, &*id)).map_err(|e| e.to_string())?;
     stmt1.next().map_err(|e| format!("删除词条失败: {}", e))?;
-    let mut stmt2 = conn.prepare("DELETE FROM vocabulary_groups WHERE id = ?")
+    let mut stmt2 = conn
+        .prepare("DELETE FROM vocabulary_groups WHERE id = ?")
         .map_err(|e| format!("准备语句失败: {}", e))?;
     stmt2.bind((1, &*id)).map_err(|e| e.to_string())?;
     stmt2.next().map_err(|e| format!("删除词组失败: {}", e))?;
@@ -755,7 +886,10 @@ fn add_vocabulary_word_cmd(
 ) -> Result<String, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     let id = format!("wrd_{}", ts);
     let mut stmt = conn.prepare(
         "INSERT INTO vocabulary_words (id, word, translation, group_id, phonetic, example) VALUES (?, ?, ?, ?, ?, ?)"
@@ -764,8 +898,10 @@ fn add_vocabulary_word_cmd(
     stmt.bind((2, &*word)).map_err(|e| e.to_string())?;
     stmt.bind((3, &*translation)).map_err(|e| e.to_string())?;
     stmt.bind((4, &*group_id)).map_err(|e| e.to_string())?;
-    stmt.bind((5, phonetic.as_deref().unwrap_or(""))).map_err(|e| e.to_string())?;
-    stmt.bind((6, example.as_deref().unwrap_or(""))).map_err(|e| e.to_string())?;
+    stmt.bind((5, phonetic.as_deref().unwrap_or("")))
+        .map_err(|e| e.to_string())?;
+    stmt.bind((6, example.as_deref().unwrap_or("")))
+        .map_err(|e| e.to_string())?;
     stmt.next().map_err(|e| format!("添加词条失败: {}", e))?;
     Ok(id)
 }
@@ -774,7 +910,8 @@ fn add_vocabulary_word_cmd(
 fn delete_vocabulary_word_cmd(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    let mut stmt = conn.prepare("DELETE FROM vocabulary_words WHERE id = ?")
+    let mut stmt = conn
+        .prepare("DELETE FROM vocabulary_words WHERE id = ?")
         .map_err(|e| format!("准备语句失败: {}", e))?;
     stmt.bind((1, &*id)).map_err(|e| e.to_string())?;
     stmt.next().map_err(|e| format!("删除词条失败: {}", e))?;
@@ -806,11 +943,13 @@ struct VocabularyWordRecord {
 fn get_vocabulary_groups_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyGroupRecord>, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
-    let mut stmt = conn.prepare(
-        "SELECT id, name, color, created_at FROM vocabulary_groups ORDER BY created_at DESC"
-    ).map_err(|e| format!("准备语句失败: {}", e))?;
-    
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, name, color, created_at FROM vocabulary_groups ORDER BY created_at DESC",
+        )
+        .map_err(|e| format!("准备语句失败: {}", e))?;
+
     let mut records = Vec::new();
     loop {
         match stmt.next() {
@@ -819,7 +958,12 @@ fn get_vocabulary_groups_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyGrou
                 let name: String = stmt.read(1).unwrap_or_default();
                 let color: String = stmt.read(2).unwrap_or_default();
                 let created_at: i64 = stmt.read(3).unwrap_or(0);
-                records.push(VocabularyGroupRecord { id, name, color, created_at });
+                records.push(VocabularyGroupRecord {
+                    id,
+                    name,
+                    color,
+                    created_at,
+                });
             }
             Ok(sqlite::State::Done) => break,
             Err(e) => return Err(format!("读取失败: {}", e)),
@@ -832,11 +976,11 @@ fn get_vocabulary_groups_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyGrou
 fn get_vocabulary_words_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyWordRecord>, String> {
     let conn = sqlite::open(db::Database::get_db_path(&app))
         .map_err(|e| format!("打开数据库失败: {}", e))?;
-    
+
     let mut stmt = conn.prepare(
         "SELECT id, word, translation, phonetic, example, group_id, created_at, review_count, last_reviewed_at FROM vocabulary_words ORDER BY review_count ASC"
     ).map_err(|e| format!("准备语句失败: {}", e))?;
-    
+
     let mut records = Vec::new();
     loop {
         match stmt.next() {
@@ -850,7 +994,17 @@ fn get_vocabulary_words_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyWordR
                 let created_at: i64 = stmt.read(6).unwrap_or(0);
                 let review_count: i32 = stmt.read(7).unwrap_or(0.0_f64) as i32;
                 let last_reviewed_at: Option<i64> = stmt.read(8).ok();
-                records.push(VocabularyWordRecord { id, word, translation, phonetic, example, group_id, created_at, review_count, last_reviewed_at });
+                records.push(VocabularyWordRecord {
+                    id,
+                    word,
+                    translation,
+                    phonetic,
+                    example,
+                    group_id,
+                    created_at,
+                    review_count,
+                    last_reviewed_at,
+                });
             }
             Ok(sqlite::State::Done) => break,
             Err(e) => return Err(format!("读取失败: {}", e)),
@@ -858,5 +1012,3 @@ fn get_vocabulary_words_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyWordR
     }
     Ok(records)
 }
-
-
