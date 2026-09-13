@@ -577,6 +577,35 @@ fn delete_api_key_cmd(app: tauri::AppHandle, service: String) -> Result<(), Stri
     keys::KeyManager::delete_key(&app, &service)
 }
 
+fn find_cached_translation(
+    app: &tauri::AppHandle,
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    engine: &str,
+) -> Option<(String, String)> {
+    let conn = sqlite::open(db::Database::get_db_path(app)).ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT translated_text, source_lang FROM translation_history \
+             WHERE source_text = ?1 AND source_lang = ?2 AND target_lang = ?3 AND engine = ?4 \
+             ORDER BY timestamp DESC LIMIT 1",
+        )
+        .ok()?;
+    stmt.bind((1, text)).ok()?;
+    stmt.bind((2, source_lang)).ok()?;
+    stmt.bind((3, target_lang)).ok()?;
+    stmt.bind((4, engine)).ok()?;
+    match stmt.next() {
+        Ok(sqlite::State::Row) => {
+            let translated: String = stmt.read(0).ok()?;
+            let cached_source_lang: String = stmt.read(1).ok()?;
+            Some((translated, cached_source_lang))
+        }
+        _ => None,
+    }
+}
+
 #[tauri::command]
 async fn translate_cmd(
     app: tauri::AppHandle,
@@ -585,6 +614,16 @@ async fn translate_cmd(
     target_lang: String,
     engine: String,
 ) -> Result<serde_json::Value, String> {
+    // 缓存命中直接返回，跳过 API（省配额/离线可用）
+    if let Some(cached) = find_cached_translation(&app, &text, &source_lang, &target_lang, &engine) {
+        return Ok(serde_json::json!({
+            "text": cached.0,
+            "source_lang": source_lang,
+            "target_lang": target_lang,
+            "engine": engine,
+        }));
+    }
+
     // 获取 API Key 和 App ID
     let key_record = keys::KeyManager::get_key_with_appid(&app, &engine)
         .map_err(|e| format!("读取 API Key 失败: {}", e))?;
