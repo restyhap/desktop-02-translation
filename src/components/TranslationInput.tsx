@@ -1,17 +1,23 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { SUPPORTED_LANGUAGES } from "@/types/translation";
+import { TTSButton } from "@/components/TTSButton";
 import type { Language, TranslationEngine } from "@/types/translation";
 
 interface TranslationInputProps {
   onTranslate?: (text: string, sourceLang: Language, targetLang: Language, engine: TranslationEngine) => void;
   defaultText?: string;
   engine?: TranslationEngine;
+  lang?: string;
 }
 
-export function TranslationInput({ onTranslate, defaultText, engine }: TranslationInputProps) {
+export function TranslationInput({ onTranslate, defaultText, engine, lang }: TranslationInputProps) {
   const [text, setText] = useState(defaultText || "");
   const [sourceLang, setSourceLang] = useState<Language>("en");
   const [targetLang, setTargetLang] = useState<Language>("zh");
+
+  useEffect(() => {
+    setText(defaultText || "");
+  }, [defaultText]);
 
   const handleTranslate = () => {
     if (text.trim() && engine) {
@@ -58,13 +64,16 @@ export function TranslationInput({ onTranslate, defaultText, engine }: Translati
         </select>
       </div>
 
-      <div className="flex-1 p-3">
+      <div className="flex-1 p-3 relative">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="输入要翻译的文本..."
-          className="w-full h-full resize-none p-3 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
+          className="w-full h-full resize-none p-3 pl-12 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
         />
+        <div className="absolute bottom-4 left-4">
+          <TTSButton text={text} lang={lang} />
+        </div>
       </div>
 
       <div className="p-3 border-t">

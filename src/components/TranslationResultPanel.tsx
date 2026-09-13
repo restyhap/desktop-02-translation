@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import type { TranslationResult } from "@/types/translation";
 import { listApiKeys } from "@/storage";
+import { TTSButton } from "@/components/TTSButton";
 
 interface ApiKeyInfo {
   service_name: string;
@@ -159,22 +160,27 @@ export function TranslationResultPanel({ result, loading = false, error = null, 
           </button>
         ))}
       </div>
-      <div className="flex-1 p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs px-2 py-1 bg-muted rounded">
-            {result.sourceLang.toUpperCase()}
-          </span>
-          <span className="text-xs text-muted-foreground">→</span>
-          <span className="text-xs px-2 py-1 bg-muted rounded">
-            {result.targetLang.toUpperCase()}
-          </span>
-          <span className="text-xs text-muted-foreground ml-auto">
-            {result.engine}
-          </span>
+      <div className="flex-1 p-3 relative">
+        <div className="w-full h-full overflow-y-auto p-3 border rounded-md">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-xs px-2 py-1 bg-muted rounded">
+              {result.sourceLang.toUpperCase()}
+            </span>
+            <span className="text-xs text-muted-foreground">→</span>
+            <span className="text-xs px-2 py-1 bg-muted rounded">
+              {result.targetLang.toUpperCase()}
+            </span>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {result.engine}
+            </span>
+          </div>
+          <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
+          <div className="text-sm font-medium leading-relaxed text-primary">
+            {result.translatedText}
+          </div>
         </div>
-        <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
-        <div className="text-sm font-medium leading-relaxed text-primary">
-          {result.translatedText}
+        <div className="absolute bottom-4 left-4">
+          <TTSButton text={result.translatedText} lang={result.targetLang} />
         </div>
       </div>
     </div>
