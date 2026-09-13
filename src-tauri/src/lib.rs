@@ -15,10 +15,19 @@ static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
 
 struct KeyboardHookProcess(Mutex<Option<std::process::Child>>);
 
-#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 struct ShortcutConfig {
     translate: String,
     show_main: String,
+}
+
+impl Default for ShortcutConfig {
+    fn default() -> Self {
+        Self {
+            translate: "⌘+C+C".into(),
+            show_main: "⌘+Shift+T".into(),
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone)]
@@ -71,6 +80,11 @@ fn save_general_config(app: &tauri::AppHandle, config: &GeneralConfig) {
 
 fn load_shortcuts(app: &tauri::AppHandle) -> ShortcutConfig {
     let path = get_shortcut_path(app);
+    if !path.exists() {
+        let defaults = ShortcutConfig::default();
+        save_shortcuts(app, &defaults);
+        return defaults;
+    }
     fs::read_to_string(&path)
         .ok()
         .and_then(|data| serde_json::from_str(&data).ok())
@@ -164,21 +178,24 @@ fn register_shortcuts(app: &tauri::AppHandle) -> Result<(), String> {
     let config = shortcuts.lock().unwrap().clone();
 
     let gs = app.global_shortcut();
-    let show_main = parse_shortcut(&config.show_main)
-        .map_err(|e| format!("显示主窗口快捷键解析失败: {}", e))?;
-
     gs.unregister_all().map_err(|e| e.to_string())?;
 
-    let _ = gs.on_shortcut(show_main, move |app, _shortcut, event| {
-        if event.state() == ShortcutState::Pressed {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.show();
-                let _ = window.set_focus();
+    if !config.show_main.is_empty() {
+        let show_main = parse_shortcut(&config.show_main)
+            .map_err(|e| format!("显示主窗口快捷键解析失败: {}", e))?;
+        let _ = gs.on_shortcut(show_main, move |app, _shortcut, event| {
+            if event.state() == ShortcutState::Pressed {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
-        }
-    });
+        });
+        println!("✓ 显示主窗口快捷键: {}", config.show_main);
+    } else {
+        println!("ℹ 显示主窗口快捷键未设置，跳过注册");
+    }
 
-    println!("✓ 显示主窗口快捷键: {}", config.show_main);
     Ok(())
 }
 
@@ -190,9 +207,14 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
 
     let hook_bin = exe_dir.join("keyboard-hook");
 
-    // 获取当前翻译快捷键配置
     let shortcuts = app.state::<Mutex<ShortcutConfig>>();
     let config = shortcuts.lock().unwrap().clone();
+
+    if config.translate.is_empty() {
+        println!("ℹ 翻译快捷键未设置，不启动 keyboard-hook");
+        return;
+    }
+
     let key_arg = extract_key_from_shortcut(&config.translate);
 
     let mut cmd = Command::new(&hook_bin);
@@ -340,16 +362,7 @@ pub fn run() {
             app.manage(KeyboardHookProcess(Mutex::new(None)));
 
             let initial_shortcuts = load_shortcuts(app.handle());
-            if initial_shortcuts.show_main.is_empty() {
-                let defaults = ShortcutConfig {
-                    translate: "⌘+C+C".into(),
-                    show_main: "⌘+Shift+T".into(),
-                };
-                save_shortcuts(app.handle(), &defaults);
-                app.manage(Mutex::new(defaults));
-            } else {
-                app.manage(Mutex::new(initial_shortcuts));
-            }
+            app.manage(Mutex::new(initial_shortcuts));
 
             register_shortcuts(app.handle()).ok();
             spawn_keyboard_hook(app.handle().clone());
@@ -491,7 +504,9 @@ fn get_shortcuts_cmd(app: tauri::AppHandle) -> Result<ShortcutConfig, String> {
 
 #[tauri::command]
 fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Result<(), String> {
-    parse_shortcut(&config.show_main).map_err(|e| format!("显示主窗口快捷键无效: {}", e))?;
+    if !config.show_main.is_empty() {
+        parse_shortcut(&config.show_main).map_err(|e| format!("显示主窗口快捷键无效: {}", e))?;
+    }
 
     save_shortcuts(&app, &config);
 

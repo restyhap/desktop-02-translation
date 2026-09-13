@@ -64,7 +64,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   general: { launchAtStartup: false, closeBehavior: "minimizeToTray", checkUpdates: true, language: "zh" },
   translation: { defaultSourceLang: "en", defaultTargetLang: "zh", defaultEngine: "google", autoDetect: true, pasteToTranslate: false },
   appearance: { theme: "system", fontSize: "medium", opacity: 100, hideDelay: 5 },
-  shortcuts: { translate: "⌘+C+C", show_main: "⌘+Shift+T" },
+  shortcuts: { translate: "", show_main: "" },
   llm: { endpoint: "", apiKey: "" },
 };
 
