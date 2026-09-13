@@ -6,140 +6,162 @@ interface ShortcutRecorderProps {
   disabled?: boolean;
 }
 
-const MODIFIER_KEYS = new Set(["Control", "Alt", "Shift", "Meta", "ControlRight", "AltRight", "ShiftRight", "MetaRight"]);
+const MODIFIER_KEYS = new Set([
+  "Control", "Alt", "Shift", "Meta",
+  "ControlRight", "AltRight", "ShiftRight", "MetaRight",
+]);
 
-const DOUBLE_TAP_WINDOW = 400;
+const MODIFIER_DISPLAY: Record<string, string> = {
+  Control: "Ctrl",
+  ControlRight: "Ctrl",
+  Alt: "⌥",
+  AltRight: "⌥",
+  Shift: "⇧",
+  ShiftRight: "⇧",
+  Meta: "⌘",
+  MetaRight: "⌘",
+};
+
+const SEQ_WINDOW = 500;
 
 function parseShortcut(shortcut: string): string[] {
   if (!shortcut) return [];
-  return shortcut.split("+").map(k => k.trim());
+  return shortcut
+    .split("+")
+    .map((k) => k.trim())
+    .filter((k) => k.length > 0);
+}
+
+function formatKey(key: string): string {
+  if (MODIFIER_DISPLAY[key]) return MODIFIER_DISPLAY[key];
+  if (key.length === 1) return key.toUpperCase();
+  return key;
 }
 
 function formatShortcut(parts: string[]): string {
-  const displayMap: Record<string, string> = {
-    Control: "Ctrl",
-    Meta: "⌘",
-    Alt: "⌥",
-    Shift: "⇧",
-  };
-
-  return parts.map(p => displayMap[p] || p).join(" + ");
+  return parts.map(formatKey).join("+");
 }
 
 export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorderProps) {
   const [recording, setRecording] = useState(false);
   const [pressedKeys, setPressedKeys] = useState<string[]>([]);
-  const pressedSetRef = useRef(new Set<string>());
-  const firstKeyRef = useRef<string | null>(null);
-  const doubleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearTimer = () => {
-    if (doubleTapTimerRef.current) {
-      clearTimeout(doubleTapTimerRef.current);
-      doubleTapTimerRef.current = null;
-    }
+  const keysRef = useRef<string[]>([]);
+  const activeModifiersRef = useRef<Set<string>>(new Set());
+  const lastKeyTimeRef = useRef(0);
+
+  const clearAll = () => {
+    keysRef.current = [];
+    activeModifiersRef.current.clear();
+    lastKeyTimeRef.current = 0;
+    setPressedKeys([]);
   };
 
   const startRecording = useCallback(() => {
     if (disabled) return;
+    clearAll();
     setRecording(true);
-    setPressedKeys([]);
-    pressedSetRef.current.clear();
-    firstKeyRef.current = null;
-    clearTimer();
   }, [disabled]);
 
   const stopRecording = useCallback(() => {
     setRecording(false);
-    pressedSetRef.current.clear();
-    firstKeyRef.current = null;
-    clearTimer();
+    clearAll();
   }, []);
 
-  const finalize = useCallback((keys: string[]) => {
-    stopRecording();
-    onChange(formatShortcut(keys));
-  }, [stopRecording, onChange]);
-
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (!recording) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const key = e.key;
-
-    if (key === "Escape") {
+  const commit = useCallback(
+    (keys: string[]) => {
       stopRecording();
-      onChange(value);
-      return;
-    }
-
-    if (key === "Backspace" || key === "Delete") {
-      pressedSetRef.current.clear();
-      setPressedKeys([]);
-      firstKeyRef.current = null;
-      clearTimer();
-      return;
-    }
-
-    const isModifier = MODIFIER_KEYS.has(key);
-    const hasModifier = e.ctrlKey || e.altKey || e.shiftKey || e.metaKey;
-
-    if (isModifier) {
-      if (!pressedSetRef.current.has(key)) {
-        pressedSetRef.current.add(key);
-        setPressedKeys(Array.from(pressedSetRef.current));
+      if (keys.length > 0) {
+        onChange(formatShortcut(keys));
+      } else {
+        onChange("");
       }
-      return;
-    }
+    },
+    [stopRecording, onChange]
+  );
 
-    if (!hasModifier) return;
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      if (!recording) return;
+      e.preventDefault();
+      e.stopPropagation();
 
-    const existing = firstKeyRef.current;
-    if (existing === null) {
-      if (!pressedSetRef.current.has(key)) {
-        pressedSetRef.current.add(key);
-        setPressedKeys(Array.from(pressedSetRef.current));
+      const key = e.key;
+
+      if (key === "Escape") {
+        stopRecording();
+        onChange(value);
+        return;
       }
-      firstKeyRef.current = key;
-      clearTimer();
-      doubleTapTimerRef.current = setTimeout(() => {
-        finalize(Array.from(pressedSetRef.current));
-      }, DOUBLE_TAP_WINDOW);
-      return;
-    }
 
-    if (existing === key) {
-      pressedSetRef.current.add(key);
-      finalize(Array.from(pressedSetRef.current));
-      return;
-    }
+      if (key === "Enter") {
+        commit([...keysRef.current]);
+        return;
+      }
 
-    pressedSetRef.current.clear();
-    pressedSetRef.current.add(key);
-    setPressedKeys(Array.from(pressedSetRef.current));
-    firstKeyRef.current = key;
-    clearTimer();
-    doubleTapTimerRef.current = setTimeout(() => {
-      finalize(Array.from(pressedSetRef.current));
-    }, DOUBLE_TAP_WINDOW);
-  }, [recording, value, onChange, stopRecording, finalize]);
+      if (key === "Backspace" || key === "Delete") {
+        keysRef.current.pop();
+        setPressedKeys([...keysRef.current]);
+        lastKeyTimeRef.current = 0;
+        return;
+      }
+
+      if (MODIFIER_KEYS.has(key)) {
+        activeModifiersRef.current.add(key);
+        if (!keysRef.current.includes(key)) {
+          keysRef.current.push(key);
+          setPressedKeys([...keysRef.current]);
+        }
+        return;
+      }
+
+      if (activeModifiersRef.current.size === 0) return;
+
+      const now = Date.now();
+      if (lastKeyTimeRef.current > 0 && now - lastKeyTimeRef.current > SEQ_WINDOW) {
+        keysRef.current = keysRef.current.filter((k) => MODIFIER_KEYS.has(k));
+      }
+
+      const normalized = key.length === 1 ? key.toUpperCase() : key;
+      keysRef.current.push(normalized);
+      lastKeyTimeRef.current = now;
+      setPressedKeys([...keysRef.current]);
+
+      const normalKeyCount = keysRef.current.filter((k) => !MODIFIER_KEYS.has(k)).length;
+      if (normalKeyCount >= 2) {
+        setTimeout(() => commit([...keysRef.current]), 300);
+      }
+    },
+    [recording, value, onChange, commit, stopRecording]
+  );
+
+  const handleKeyUp = useCallback(
+    (e: KeyboardEvent) => {
+      if (!recording) return;
+      const key = e.key;
+      if (MODIFIER_KEYS.has(key)) {
+        activeModifiersRef.current.delete(key);
+      }
+    },
+    [recording]
+  );
 
   useEffect(() => {
     if (!recording) return;
     document.addEventListener("keydown", handleKeyDown, true);
+    document.addEventListener("keyup", handleKeyUp, true);
     return () => {
       document.removeEventListener("keydown", handleKeyDown, true);
+      document.removeEventListener("keyup", handleKeyUp, true);
     };
-  }, [recording, handleKeyDown]);
+  }, [recording, handleKeyDown, handleKeyUp]);
 
-  useEffect(() => {
-    return () => clearTimer();
-  }, []);
+  const displayParts = recording
+    ? (pressedKeys.length > 0 ? pressedKeys.map(formatKey) : [])
+    : (value ? parseShortcut(value).map(formatKey) : []);
 
-  const displayText = recording
-    ? (pressedKeys.length > 0 ? formatShortcut(pressedKeys) : "请按快捷键...")
-    : (value ? formatShortcut(parseShortcut(value)) : "未设置");
+  const displayText =
+    displayParts.length > 0 ? displayParts.join(" + ") : (recording ? "请按快捷键..." : "未设置");
 
   return (
     <button
@@ -159,7 +181,9 @@ export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorder
           </kbd>
         </span>
       ))}
-      {recording && <span className="text-xs opacity-75 ml-1">按 Esc 取消</span>}
+      {recording && (
+        <span className="text-xs opacity-75 ml-1">Enter 确认 · Esc 取消 · Backspace 删除</span>
+      )}
     </button>
   );
 }

@@ -55,10 +55,6 @@ fn get_config_dir(app: &tauri::AppHandle) -> PathBuf {
     config_dir
 }
 
-fn get_shortcut_path(app: &tauri::AppHandle) -> PathBuf {
-    get_config_dir(app).join("shortcuts.json")
-}
-
 fn get_settings_path(app: &tauri::AppHandle) -> PathBuf {
     get_config_dir(app).join("settings.json")
 }
@@ -79,22 +75,54 @@ fn save_general_config(app: &tauri::AppHandle, config: &GeneralConfig) {
 }
 
 fn load_shortcuts(app: &tauri::AppHandle) -> ShortcutConfig {
-    let path = get_shortcut_path(app);
-    if !path.exists() {
-        let defaults = ShortcutConfig::default();
-        save_shortcuts(app, &defaults);
-        return defaults;
+    let conn = match sqlite::open(db::Database::get_db_path(app)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[shortcuts] 打开数据库失败，使用默认值: {}", e);
+            return ShortcutConfig::default();
+        }
+    };
+
+    let mut stmt = match conn.prepare("SELECT value_json FROM app_settings WHERE key = 'shortcuts'") {
+        Ok(s) => s,
+        Err(_) => return ShortcutConfig::default(),
+    };
+
+    match stmt.next() {
+        Ok(sqlite::State::Row) => {
+            let json_str: String = stmt.read(0).unwrap_or_default();
+            serde_json::from_str(&json_str).unwrap_or_default()
+        }
+        _ => {
+            let defaults = ShortcutConfig::default();
+            save_shortcuts(app, &defaults);
+            defaults
+        }
     }
-    fs::read_to_string(&path)
-        .ok()
-        .and_then(|data| serde_json::from_str(&data).ok())
-        .unwrap_or_default()
 }
 
 fn save_shortcuts(app: &tauri::AppHandle, config: &ShortcutConfig) {
-    let path = get_shortcut_path(app);
-    if let Ok(data) = serde_json::to_string_pretty(config) {
-        fs::write(path, data).ok();
+    let conn = match sqlite::open(db::Database::get_db_path(app)) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("[shortcuts] 打开数据库失败，无法保存: {}", e);
+            return;
+        }
+    };
+
+    let json_str = serde_json::to_string(config).unwrap_or_default();
+    let mut stmt = match conn.prepare(
+        "INSERT OR REPLACE INTO app_settings (key, value_json) VALUES ('shortcuts', ?)",
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[shortcuts] 准备语句失败: {}", e);
+            return;
+        }
+    };
+    stmt.bind((1, json_str.as_str())).ok();
+    if let Err(e) = stmt.next() {
+        eprintln!("[shortcuts] 保存到数据库失败: {:?}", e);
     }
 }
 
@@ -104,12 +132,13 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
     let mut code = None;
 
     for part in &parts {
-        match *part {
-            "Ctrl" => modifiers |= Modifiers::CONTROL,
-            "⌘" => modifiers |= Modifiers::SUPER,
-            "⇧" => modifiers |= Modifiers::SHIFT,
-            "⌥" => modifiers |= Modifiers::ALT,
-            key if key.len() == 1 => {
+        let part = part.trim();
+        match part {
+            "Ctrl" | "Control" => modifiers |= Modifiers::CONTROL,
+            "⌘" | "Meta" | "Command" => modifiers |= Modifiers::SUPER,
+            "⇧" | "Shift" => modifiers |= Modifiers::SHIFT,
+            "⌥" | "Alt" => modifiers |= Modifiers::ALT,
+            key if !key.is_empty() && key.len() == 1 => {
                 code = Some(match key.to_uppercase().as_str() {
                     "A" => Code::KeyA,
                     "B" => Code::KeyB,
@@ -150,7 +179,7 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
                     _ => return Err(format!("Unsupported key: {}", key)),
                 });
             }
-            _ => return Err(format!("Invalid shortcut part: {}", part)),
+            _ => {}
         }
     }
 
@@ -158,19 +187,18 @@ fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
     Ok(Shortcut::new(Some(modifiers), code))
 }
 
-fn extract_key_from_shortcut(shortcut: &str) -> String {
-    // 从快捷键字符串中提取最后一个非修饰键
-    let parts: Vec<&str> = shortcut.split('+').collect();
-    for part in parts.iter().rev() {
-        let key = part.trim();
-        if !matches!(
-            key,
-            "Ctrl" | "⌘" | "⇧" | "⌥" | "Command" | "Control" | "Shift" | "Alt"
-        ) {
-            return key.to_uppercase();
-        }
+fn extract_keys_from_shortcut(shortcut: &str) -> String {
+    let modifier_names = ["Ctrl", "⌘", "⇧", "⌥", "Command", "Control", "Shift", "Alt", "Meta"];
+    let keys: Vec<String> = shortcut
+        .split('+')
+        .map(|part| part.trim().to_string())
+        .filter(|key| !key.is_empty() && !modifier_names.contains(&key.as_str()))
+        .collect();
+    if keys.is_empty() {
+        "C".to_string()
+    } else {
+        keys.join(",")
     }
-    "C".to_string()
 }
 
 fn register_shortcuts(app: &tauri::AppHandle) -> Result<(), String> {
@@ -215,7 +243,7 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
         return;
     }
 
-    let key_arg = extract_key_from_shortcut(&config.translate);
+    let key_arg = extract_keys_from_shortcut(&config.translate);
 
     let mut cmd = Command::new(&hook_bin);
     cmd.arg(&key_arg)
@@ -504,10 +532,6 @@ fn get_shortcuts_cmd(app: tauri::AppHandle) -> Result<ShortcutConfig, String> {
 
 #[tauri::command]
 fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Result<(), String> {
-    if !config.show_main.is_empty() {
-        parse_shortcut(&config.show_main).map_err(|e| format!("显示主窗口快捷键无效: {}", e))?;
-    }
-
     save_shortcuts(&app, &config);
 
     {
@@ -515,7 +539,9 @@ fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Result
         *state.lock().unwrap() = config.clone();
     }
 
-    register_shortcuts(&app)?;
+    if let Err(e) = register_shortcuts(&app) {
+        eprintln!("[shortcuts] 注册显示主窗口快捷键失败（不影响翻译快捷键）: {}", e);
+    }
 
     {
         let hook_state = app.state::<KeyboardHookProcess>();

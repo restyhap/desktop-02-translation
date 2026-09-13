@@ -2,12 +2,13 @@ use std::env;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
-const DOUBLE_TAP_WINDOW: Duration = Duration::from_millis(400);
+// 窗口：相邻按键的最大间隔
+const SEQ_WINDOW: Duration = Duration::from_millis(500);
 
 struct State {
-    key_to_detect: rdev::Key,
+    key_sequence: Vec<rdev::Key>,
+    match_index: usize,
     last_press: Instant,
-    count: u32,
     last_mouse_pos: Option<(f64, f64)>,
     ctrl_held: bool,
     meta_held: bool,
@@ -16,9 +17,9 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            key_to_detect: rdev::Key::KeyC,
-            last_press: Instant::now() - DOUBLE_TAP_WINDOW,
-            count: 0,
+            key_sequence: vec![rdev::Key::KeyC],
+            match_index: 0,
+            last_press: Instant::now() - SEQ_WINDOW,
             last_mouse_pos: None,
             ctrl_held: false,
             meta_held: false,
@@ -32,21 +33,33 @@ fn is_modifier_key(key: &rdev::Key) -> bool {
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let key_config = if args.len() > 1 {
+    // 参数格式: "C,D" 或 "C,C"（按键序列，逗号分隔）
+    let seq_arg = if args.len() > 1 {
         args[1].clone()
     } else {
         "C".to_string()
     };
 
-    let key_to_detect = parse_key(&key_config).unwrap_or(rdev::Key::KeyC);
+    let key_sequence: Vec<rdev::Key> = seq_arg
+        .split(',')
+        .filter_map(|s| parse_key(s.trim()))
+        .collect();
+
+    if key_sequence.is_empty() {
+        eprintln!("[hook] 无效的按键序列: {}", seq_arg);
+        std::process::exit(1);
+    }
 
     let mut state = State {
-        key_to_detect,
+        key_sequence,
         ..State::default()
     };
     let mut stdout = io::stdout();
 
-    eprintln!("[hook] keyboard-hook started, key={:?}", state.key_to_detect);
+    eprintln!(
+        "[hook] keyboard-hook started, sequence={:?}",
+        state.key_sequence
+    );
 
     if let Err(e) = rdev::listen(move |event| match event.event_type {
         rdev::EventType::KeyPress(key) => {
@@ -58,27 +71,38 @@ fn main() {
                 }
                 return;
             }
-            if key == state.key_to_detect {
-                if !state.ctrl_held && !state.meta_held {
-                    return;
-                }
+
+            // 非修饰键按下：必须是序列中的下一个键，且修饰键处于按下状态
+            if !(state.ctrl_held || state.meta_held) {
+                // 未持修饰键时按普通键，重置匹配
+                state.match_index = 0;
+                return;
+            }
+
+            let expected = &state.key_sequence[state.match_index];
+            if key == *expected {
                 let now = Instant::now();
                 let gap = now.duration_since(state.last_press);
 
-                if gap < DOUBLE_TAP_WINDOW {
-                    state.count += 1;
-                } else {
-                    state.count = 1;
-                }
+                state.match_index += 1;
                 state.last_press = now;
 
-                if state.count >= 2 {
-                    state.count = 0;
+                // 窗口超界：重置
+                if gap > SEQ_WINDOW {
+                    state.match_index = 0;
+                }
+
+                // 序列完整匹配
+                if state.match_index >= state.key_sequence.len() {
+                    state.match_index = 0;
                     eprintln!("[hook] >>> SENDING TRANSLATE");
                     let (x, y) = state.last_mouse_pos.unwrap_or((0.0, 0.0));
                     let _ = writeln!(stdout, "TRANSLATE {} {}", x, y);
                     let _ = stdout.flush();
                 }
+            } else {
+                // 按了非预期键，重置匹配
+                state.match_index = 0;
             }
         }
         rdev::EventType::KeyRelease(key) => {
@@ -88,6 +112,8 @@ fn main() {
                     rdev::Key::MetaLeft | rdev::Key::MetaRight => state.meta_held = false,
                     _ => {}
                 }
+                // 修饰键抬起时重置匹配（按下字母键时功能键必须处于按下状态）
+                state.match_index = 0;
             }
         }
         rdev::EventType::MouseMove { x, y } => {
