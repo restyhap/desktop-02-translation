@@ -4,9 +4,6 @@ use std::path::{Path, PathBuf};
 use sqlite::Connection;
 use walkdir::WalkDir;
 
-const DEFAULT_INPUT: &str = "/Users/resty/01-build/goldendict_dictionary";
-const DEFAULT_OUTPUT: &str = "/Users/resty/02-workspace/09-project/desktop-02-translation/src-tauri/dictionaries.db";
-
 fn last_rowid(conn: &Connection) -> i64 {
     unsafe { sqlite::ffi::sqlite3_last_insert_rowid(conn.as_raw()) }
 }
@@ -25,11 +22,17 @@ fn main() {
         }
         i += 1;
     }
+    let output_db = match args.iter().position(|a| a == "--output").and_then(|i| args.get(i + 1)) {
+        Some(v) => v.clone(),
+        None => {
+            eprintln!("用法: dictbuild --input <词典目录> [--input <目录> ...] --output <dictionaries.db>");
+            std::process::exit(2);
+        }
+    };
     if inputs.is_empty() {
-        inputs.push(DEFAULT_INPUT.to_string());
+        eprintln!("错误: 至少需要一个 --input <词典目录>");
+        std::process::exit(2);
     }
-    let output_db = args.iter().position(|a| a == "--output")
-        .and_then(|i| args.get(i + 1)).cloned().unwrap_or_else(|| DEFAULT_OUTPUT.to_string());
     println!("🔧 dictbuild\n   输入: {:?}\n   输出: {}", inputs, output_db);
     let conn = sqlite::open(&output_db).expect("无法创建数据库");
     init_schema(&conn);

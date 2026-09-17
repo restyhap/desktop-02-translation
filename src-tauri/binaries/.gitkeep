@@ -1,0 +1,3 @@
+# 占位文件: 保证 binaries/ 目录存在
+# tauri-build 会在构建脚本阶段校验 bundle.resources 路径是否存在,
+# 因此该目录必须先存在, 真实 dictbuild 二进制由 `npm run build:dictbuild` 在打包前填入。

@@ -1172,11 +1172,10 @@ fn dict_load_resource_cmd(app: tauri::AppHandle, word: String) -> Result<Vec<dic
 
 #[tauri::command]
 fn dict_get_resource_cmd(
-    app: tauri::AppHandle,
     zip_file: String,
     filename: String,
 ) -> Result<dict::DictResourceData, String> {
-    dict::Dictionary::get_resource_data(&app, zip_file, filename)
+    dict::Dictionary::get_resource_data(zip_file, filename)
 }
 
 #[tauri::command]

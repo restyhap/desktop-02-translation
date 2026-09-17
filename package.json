@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:dictbuild": "cd src-tauri && cargo build --release --bin dictbuild && mkdir -p binaries && cp target/release/dictbuild binaries/dictbuild",
     "preview": "vite preview",
     "tauri": "tauri"
   },

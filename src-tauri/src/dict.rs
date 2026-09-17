@@ -237,7 +237,7 @@ impl Dictionary {
     }
 
     // 从资源 zip 中提取单个文件, 返回 base64 (data URL 用); 用系统 unzip, 避免新增依赖
-    pub fn get_resource_data(app: &tauri::AppHandle, zip_file: String, filename: String) -> Result<DictResourceData, String> {
+    pub fn get_resource_data(zip_file: String, filename: String) -> Result<DictResourceData, String> {
         let path = std::path::PathBuf::from(&zip_file);
         if !path.exists() {
             return Err(format!("资源包不存在: {}", zip_file));
@@ -293,16 +293,26 @@ impl Dictionary {
         Self::get_db_path(app).exists()
     }
 
-    pub fn build(app: &tauri::AppHandle) -> Result<String, String> {
-        let exe_dir = std::env::current_exe()
-            .map_err(|e| format!("获取当前目录失败: {}", e))?
-            .parent()
-            .ok_or_else(|| "无法获取可执行文件目录")?
-            .to_path_buf();
-        let dictbuild_bin = exe_dir.join("dictbuild");
-        if !dictbuild_bin.exists() {
-            return Err(format!("dictbuild 未找到: {}", dictbuild_bin.display()));
+    // dictbuild 位置: dev 时由 cargo 产出在 target/<profile>/, 生产时随 bundle.resources
+    // 落到 Contents/Resources/binaries/ (macOS)。resource_dir() 在 dev 返回 target 目录、生产返回
+    // 平台资源目录, 因此优先用它, 再兜底 exe 同级。
+    fn find_dictbuild(app: &tauri::AppHandle) -> Option<PathBuf> {
+        let mut candidates: Vec<PathBuf> = Vec::new();
+        if let Ok(dir) = app.path().resource_dir() {
+            candidates.push(dir.join("binaries").join("dictbuild"));
+            candidates.push(dir.join("dictbuild"));
         }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                candidates.push(parent.join("dictbuild"));
+            }
+        }
+        candidates.into_iter().find(|p| p.exists())
+    }
+
+    pub fn build(app: &tauri::AppHandle) -> Result<String, String> {
+        let dictbuild_bin = Self::find_dictbuild(app)
+            .ok_or_else(|| "dictbuild 未找到（dev 请先 cargo build，打包版请检查 bundle.resources）".to_string())?;
         let db_path = Self::get_db_path(app);
         let paths = super::db::DictPaths::get(app)?;
         if paths.is_empty() {

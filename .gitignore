@@ -11,3 +11,7 @@ src-tauri/target/
 
 # Python 缓存
 __pycache__/
+
+# dictbuild 打包产物（保留目录占位）
+src-tauri/binaries/*
+!src-tauri/binaries/.gitkeep

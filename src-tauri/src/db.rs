@@ -121,10 +121,11 @@ impl Database {
 
         if count == 0 {
             let json = serde_json::json!({"general":{},"translation":{},"appearance":{},"shortcuts":{}, "llm":{}});
-            let _ = conn.execute(format!(
-                "INSERT INTO app_settings VALUES ('default', '{}')",
-                serde_json::to_string(&json).unwrap().replace("'", "''")
-            ));
+            let payload = serde_json::to_string(&json).unwrap_or_else(|_| "{}".to_string());
+            if let Ok(mut stmt) = conn.prepare("INSERT INTO app_settings (key, value_json) VALUES ('default', ?1)") {
+                let _ = stmt.bind((1, payload.as_str()));
+                let _ = stmt.next();
+            }
         }
 
         // 更新或插入版本号
@@ -137,15 +138,15 @@ impl Database {
         };
 
         if version_count == 0 {
-            let _ = conn.execute(format!(
-                "INSERT INTO schema_version (version) VALUES ({})",
-                SCHEMA_VERSION
-            ));
+            if let Ok(mut stmt) = conn.prepare("INSERT INTO schema_version (version) VALUES (?1)") {
+                let _ = stmt.bind((1, SCHEMA_VERSION as i64));
+                let _ = stmt.next();
+            }
         } else {
-            let _ = conn.execute(format!(
-                "UPDATE schema_version SET version = {}",
-                SCHEMA_VERSION
-            ));
+            if let Ok(mut stmt) = conn.prepare("UPDATE schema_version SET version = ?1") {
+                let _ = stmt.bind((1, SCHEMA_VERSION as i64));
+                let _ = stmt.next();
+            }
         }
 
         Ok(DbInitStatus {
@@ -191,10 +192,16 @@ impl EngineManager {
             ("volcano", "火山翻译", "https://translate-api.volcanoengine.com/", true, true),
         ];
         for (name, display, url, app_id, api_key) in &engines {
-            let _ = conn.execute(&format!(
-                "INSERT OR IGNORE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES ('{}', '{}', '{}', {}, {})",
-                name, display, url, if *app_id { 1 } else { 0 }, if *api_key { 1 } else { 0 }
-            ));
+            if let Ok(mut stmt) = conn.prepare(
+                "INSERT OR IGNORE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES (?1, ?2, ?3, ?4, ?5)",
+            ) {
+                let _ = stmt.bind((1, *name));
+                let _ = stmt.bind((2, *display));
+                let _ = stmt.bind((3, *url));
+                let _ = stmt.bind((4, if *app_id { 1 } else { 0 }));
+                let _ = stmt.bind((5, if *api_key { 1 } else { 0 }));
+                let _ = stmt.next();
+            }
         }
         Ok(())
     }
@@ -225,17 +232,27 @@ impl EngineManager {
 
     pub fn add(app: &tauri::AppHandle, service_name: &str, display_name: &str, url: &str, requires_app_id: bool, requires_api_key: bool) -> Result<(), String> {
         let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
-        conn.execute(&format!(
-            "INSERT OR REPLACE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES ('{}', '{}', '{}', {}, {})",
-            service_name, display_name, url, if requires_app_id { 1 } else { 0 }, if requires_api_key { 1 } else { 0 }
-        )).map_err(|e| format!("添加翻译引擎失败: {}", e))?;
+        let mut stmt = conn
+            .prepare(
+                "INSERT OR REPLACE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .map_err(|e| format!("添加翻译引擎失败: {}", e))?;
+        stmt.bind((1, service_name)).map_err(|e| e.to_string())?;
+        stmt.bind((2, display_name)).map_err(|e| e.to_string())?;
+        stmt.bind((3, url)).map_err(|e| e.to_string())?;
+        stmt.bind((4, if requires_app_id { 1 } else { 0 })).map_err(|e| e.to_string())?;
+        stmt.bind((5, if requires_api_key { 1 } else { 0 })).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| format!("添加翻译引擎失败: {}", e))?;
         Ok(())
     }
 
     pub fn delete(app: &tauri::AppHandle, service_name: &str) -> Result<(), String> {
         let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
-        conn.execute(&format!("DELETE FROM translation_engines WHERE service_name = '{}'", service_name))
+        let mut stmt = conn
+            .prepare("DELETE FROM translation_engines WHERE service_name = ?1")
             .map_err(|e| format!("删除翻译引擎失败: {}", e))?;
+        stmt.bind((1, service_name)).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| format!("删除翻译引擎失败: {}", e))?;
         Ok(())
     }
 }
@@ -267,11 +284,11 @@ impl DictPaths {
     pub fn set(app: &tauri::AppHandle, paths: &[String]) -> Result<(), String> {
         let conn = Self::conn(app)?;
         let json = serde_json::to_string(paths).map_err(|e| e.to_string())?;
-        conn.execute(&format!(
-            "INSERT OR REPLACE INTO dict_settings (key, value) VALUES ('paths', '{}')",
-            json.replace('\'', "''")
-        ))
-        .map_err(|e| format!("保存词典路径失败: {}", e))?;
+        let mut stmt = conn
+            .prepare("INSERT OR REPLACE INTO dict_settings (key, value) VALUES ('paths', ?1)")
+            .map_err(|e| format!("保存词典路径失败: {}", e))?;
+        stmt.bind((1, json.as_str())).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| format!("保存词典路径失败: {}", e))?;
         Ok(())
     }
 }
