@@ -24,6 +24,127 @@ pub fn unix_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// 判断表中是否存在某列（SQLite 的 ALTER TABLE ADD COLUMN 无 IF NOT EXISTS）
+fn column_exists(conn: &sqlite::Connection, table: &str, column: &str) -> bool {
+    match conn.prepare(format!("PRAGMA table_info({})", table)) {
+        Ok(mut stmt) => {
+            while let Ok(sqlite::State::Row) = stmt.next() {
+                if stmt.read::<String, _>(1).map(|n| n == column).unwrap_or(false) {
+                    return true;
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
+/// 判断表是否存在（CREATE TABLE IF NOT EXISTS 对已存在表也返回 Ok，无法据此判断是否新建）
+fn table_exists(conn: &sqlite::Connection, table: &str) -> bool {
+    match conn.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?") {
+        Ok(mut stmt) => {
+            let _ = stmt.bind((1, table));
+            matches!(stmt.next(), Ok(sqlite::State::Row))
+        }
+        Err(_) => false,
+    }
+}
+
+/// 旧库补列迁移：列缺失才 ALTER，已有列不动（数据不丢）
+fn ensure_column(conn: &sqlite::Connection, table: &str, column: &str, ddl: &str) {
+    if !column_exists(conn, table, column) {
+        let _ = conn.execute(format!("ALTER TABLE {} ADD COLUMN {}", table, ddl));
+    }
+}
+
+/// 应用全部表结构与列迁移。
+/// 生产 Database::init 与单元测试共用此函数，保证测试跑在真实 schema 上。
+pub fn apply_schema(conn: &sqlite::Connection) -> Result<Vec<String>, String> {
+    let mut tables_created = Vec::new();
+
+    let ddl = [
+        (
+            "schema_version",
+            "CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        )",
+        ),
+        (
+            "translation_history",
+            "CREATE TABLE IF NOT EXISTS translation_history (
+            id TEXT PRIMARY KEY, source_text TEXT NOT NULL, translated_text TEXT NOT NULL,
+            source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, engine TEXT NOT NULL DEFAULT 'google',
+            timestamp INTEGER NOT NULL DEFAULT (strftime('%s','now')), favorite INTEGER NOT NULL DEFAULT 0
+        )",
+        ),
+        (
+            "dictionaries",
+            "CREATE TABLE IF NOT EXISTS dictionaries (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, format TEXT NOT NULL DEFAULT 'mdx',
+            path TEXT NOT NULL, word_count INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1
+        )",
+        ),
+        (
+            "vocabulary_groups",
+            "CREATE TABLE IF NOT EXISTS vocabulary_groups (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#3b82f6',
+            created_at INTEGER NOT NULL DEFAULT 0
+        )",
+        ),
+        (
+            "vocabulary_words",
+            "CREATE TABLE IF NOT EXISTS vocabulary_words (
+            id TEXT PRIMARY KEY, word TEXT NOT NULL, translation TEXT NOT NULL, group_id TEXT NOT NULL,
+            phonetic TEXT NOT NULL DEFAULT '', example TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL DEFAULT 0, review_count INTEGER NOT NULL DEFAULT 0,
+            last_reviewed_at INTEGER
+        )",
+        ),
+        (
+            "app_settings",
+            "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)",
+        ),
+        (
+            "dict_settings",
+            "CREATE TABLE IF NOT EXISTS dict_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        ),
+        (
+            "translation_engines",
+            "CREATE TABLE IF NOT EXISTS translation_engines (
+            service_name TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            requires_app_id INTEGER NOT NULL DEFAULT 0,
+            requires_api_key INTEGER NOT NULL DEFAULT 1
+        )",
+        ),
+    ];
+
+    for (name, sql) in ddl {
+        if table_exists(conn, name) {
+            continue;
+        }
+        conn.execute(sql)
+            .map_err(|e| format!("建表失败 {}: {}", name, e))?;
+        tables_created.push(name.to_string());
+    }
+
+    // 旧库补列（CREATE TABLE IF NOT EXISTS 不会更新已存在的表）
+    ensure_column(conn, "vocabulary_groups", "created_at", "created_at INTEGER NOT NULL DEFAULT 0");
+    ensure_column(conn, "vocabulary_words", "phonetic", "phonetic TEXT NOT NULL DEFAULT ''");
+    ensure_column(conn, "vocabulary_words", "example", "example TEXT NOT NULL DEFAULT ''");
+    ensure_column(conn, "vocabulary_words", "created_at", "created_at INTEGER NOT NULL DEFAULT 0");
+    ensure_column(conn, "vocabulary_words", "review_count", "review_count INTEGER NOT NULL DEFAULT 0");
+    ensure_column(conn, "vocabulary_words", "last_reviewed_at", "last_reviewed_at INTEGER");
+
+    let _ = conn
+        .execute("CREATE INDEX IF NOT EXISTS idx_ts ON translation_history(timestamp DESC)");
+    let _ = conn.execute("CREATE INDEX IF NOT EXISTS idxfav ON translation_history(favorite DESC, timestamp DESC)");
+
+    Ok(tables_created)
+}
+
 pub struct Database;
 
 impl Database {
@@ -44,82 +165,7 @@ impl Database {
         let db_path = Self::get_db_path(app);
         let conn = open_db(app)?;
 
-        let mut tables_created = Vec::new();
-
-        // 创建版本控制表
-        if conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            applied_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
-        )",
-            )
-            .is_ok()
-        {
-            tables_created.push("schema_version".to_string());
-        }
-
-        // 创建翻译历史表
-        if conn.execute("CREATE TABLE IF NOT EXISTS translation_history (
-            id TEXT PRIMARY KEY, source_text TEXT NOT NULL, translated_text TEXT NOT NULL,
-            source_lang TEXT NOT NULL, target_lang TEXT NOT NULL, engine TEXT NOT NULL DEFAULT 'google',
-            timestamp INTEGER NOT NULL DEFAULT (strftime('%s','now')), favorite INTEGER NOT NULL DEFAULT 0
-        )").is_ok() {
-            tables_created.push("translation_history".to_string());
-        }
-
-        // 创建词典表
-        if conn.execute("CREATE TABLE IF NOT EXISTS dictionaries (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, format TEXT NOT NULL DEFAULT 'mdx',
-            path TEXT NOT NULL, word_count INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1
-        )").is_ok() {
-            tables_created.push("dictionaries".to_string());
-        }
-
-        // 创建词组表
-        if conn
-            .execute(
-                "CREATE TABLE IF NOT EXISTS vocabulary_groups (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL, color TEXT NOT NULL DEFAULT '#3b82f6'
-        )",
-            )
-            .is_ok()
-        {
-            tables_created.push("vocabulary_groups".to_string());
-        }
-
-        // 创建词条表
-        if conn.execute("CREATE TABLE IF NOT EXISTS vocabulary_words (
-            id TEXT PRIMARY KEY, word TEXT NOT NULL, translation TEXT NOT NULL, group_id TEXT NOT NULL
-        )").is_ok() {
-            tables_created.push("vocabulary_words".to_string());
-        }
-
-        // 创建用户设置表
-        if conn.execute("CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)").is_ok() {
-            tables_created.push("app_settings".to_string());
-        }
-
-        // 创建词典路径设置表
-        if conn.execute("CREATE TABLE IF NOT EXISTS dict_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").is_ok() {
-            tables_created.push("dict_settings".to_string());
-        }
-
-        // 创建翻译引擎表
-        if conn.execute("CREATE TABLE IF NOT EXISTS translation_engines (
-            service_name TEXT PRIMARY KEY,
-            display_name TEXT NOT NULL,
-            url TEXT NOT NULL,
-            requires_app_id INTEGER NOT NULL DEFAULT 0,
-            requires_api_key INTEGER NOT NULL DEFAULT 1
-        )").is_ok() {
-            tables_created.push("translation_engines".to_string());
-        }
-
-        // 创建索引
-        let _ = conn
-            .execute("CREATE INDEX IF NOT EXISTS idx_ts ON translation_history(timestamp DESC)");
-        let _ = conn.execute("CREATE INDEX IF NOT EXISTS idxfav ON translation_history(favorite DESC, timestamp DESC)");
+        let tables_created = apply_schema(&conn)?;
 
         // 插入默认设置（如果不存在）
         let count: i64 = match conn.prepare("SELECT COUNT(*) FROM app_settings") {
@@ -290,5 +336,52 @@ impl DictPaths {
         stmt.bind((1, json.as_str())).map_err(|e| e.to_string())?;
         stmt.next().map_err(|e| format!("保存词典路径失败: {}", e))?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_schema_is_idempotent() {
+        let conn = sqlite::open(":memory:").unwrap();
+        let first = apply_schema(&conn).unwrap();
+        assert!(!first.is_empty(), "首次应建表");
+
+        let second = apply_schema(&conn).unwrap();
+        assert!(second.is_empty(), "二次调用不应重复建表");
+    }
+
+    #[test]
+    fn apply_schema_migrates_legacy_tables_missing_columns() {
+        let conn = sqlite::open(":memory:").unwrap();
+        // 复刻历史库的缺列结构（BUG 现场）
+        conn.execute(
+            "CREATE TABLE vocabulary_words (id TEXT PRIMARY KEY, word TEXT NOT NULL, translation TEXT NOT NULL, group_id TEXT NOT NULL)",
+        )
+        .unwrap();
+
+        apply_schema(&conn).unwrap();
+
+        let mut stmt = conn.prepare("PRAGMA table_info(vocabulary_words)").unwrap();
+        let mut cols = Vec::new();
+        while let sqlite::State::Row = stmt.next().unwrap() {
+            cols.push(stmt.read::<String, _>(1).unwrap());
+        }
+        for expected in [
+            "phonetic",
+            "example",
+            "created_at",
+            "review_count",
+            "last_reviewed_at",
+        ] {
+            assert!(
+                cols.contains(&expected.to_string()),
+                "迁移后应含列 {}，实际: {:?}",
+                expected,
+                cols
+            );
+        }
     }
 }

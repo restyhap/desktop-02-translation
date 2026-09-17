@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::db;
+
+static ID_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn next_id(prefix: &str) -> String {
+    format!(
+        "{}_{}_{}",
+        prefix,
+        db::unix_millis(),
+        ID_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VocabularyGroupRecord {
@@ -27,20 +39,27 @@ pub struct VocabularyStore;
 
 impl VocabularyStore {
     pub fn add_group(app: &tauri::AppHandle, name: &str, color: &str) -> Result<String, String> {
-        let conn = db::open_db(app)?;
-        let id = format!("grp_{}", db::unix_millis());
+        Self::add_group_conn(&db::open_db(app)?, name, color)
+    }
+
+    fn add_group_conn(conn: &sqlite::Connection, name: &str, color: &str) -> Result<String, String> {
+        let id = next_id("grp");
         let mut stmt = conn
-            .prepare("INSERT INTO vocabulary_groups (id, name, color) VALUES (?, ?, ?)")
+            .prepare("INSERT INTO vocabulary_groups (id, name, color, created_at) VALUES (?, ?, ?, ?)")
             .map_err(|e| format!("准备语句失败: {}", e))?;
         stmt.bind((1, &*id)).map_err(|e| e.to_string())?;
         stmt.bind((2, name)).map_err(|e| e.to_string())?;
         stmt.bind((3, color)).map_err(|e| e.to_string())?;
+        stmt.bind((4, db::unix_millis())).map_err(|e| e.to_string())?;
         stmt.next().map_err(|e| format!("创建词组失败: {}", e))?;
         Ok(id)
     }
 
     pub fn delete_group(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
-        let conn = db::open_db(app)?;
+        Self::delete_group_conn(&db::open_db(app)?, id)
+    }
+
+    fn delete_group_conn(conn: &sqlite::Connection, id: &str) -> Result<(), String> {
         let mut stmt1 = conn
             .prepare("DELETE FROM vocabulary_words WHERE group_id = ?")
             .map_err(|e| format!("准备语句失败: {}", e))?;
@@ -62,11 +81,21 @@ impl VocabularyStore {
         phonetic: Option<&str>,
         example: Option<&str>,
     ) -> Result<String, String> {
-        let conn = db::open_db(app)?;
-        let id = format!("wrd_{}", db::unix_millis());
+        Self::add_word_conn(&db::open_db(app)?, word, translation, group_id, phonetic, example)
+    }
+
+    fn add_word_conn(
+        conn: &sqlite::Connection,
+        word: &str,
+        translation: &str,
+        group_id: &str,
+        phonetic: Option<&str>,
+        example: Option<&str>,
+    ) -> Result<String, String> {
+        let id = next_id("wrd");
         let mut stmt = conn
             .prepare(
-                "INSERT INTO vocabulary_words (id, word, translation, group_id, phonetic, example) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO vocabulary_words (id, word, translation, group_id, phonetic, example, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             )
             .map_err(|e| format!("准备语句失败: {}", e))?;
         stmt.bind((1, &*id)).map_err(|e| e.to_string())?;
@@ -77,12 +106,16 @@ impl VocabularyStore {
             .map_err(|e| e.to_string())?;
         stmt.bind((6, example.unwrap_or("")))
             .map_err(|e| e.to_string())?;
+        stmt.bind((7, db::unix_millis())).map_err(|e| e.to_string())?;
         stmt.next().map_err(|e| format!("添加词条失败: {}", e))?;
         Ok(id)
     }
 
     pub fn delete_word(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
-        let conn = db::open_db(app)?;
+        Self::delete_word_conn(&db::open_db(app)?, id)
+    }
+
+    fn delete_word_conn(conn: &sqlite::Connection, id: &str) -> Result<(), String> {
         let mut stmt = conn
             .prepare("DELETE FROM vocabulary_words WHERE id = ?")
             .map_err(|e| format!("准备语句失败: {}", e))?;
@@ -92,8 +125,10 @@ impl VocabularyStore {
     }
 
     pub fn list_groups(app: &tauri::AppHandle) -> Result<Vec<VocabularyGroupRecord>, String> {
-        let conn = db::open_db(app)?;
+        Self::list_groups_conn(&db::open_db(app)?)
+    }
 
+    fn list_groups_conn(conn: &sqlite::Connection) -> Result<Vec<VocabularyGroupRecord>, String> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, name, color, created_at FROM vocabulary_groups ORDER BY created_at DESC",
@@ -123,8 +158,10 @@ impl VocabularyStore {
     }
 
     pub fn list_words(app: &tauri::AppHandle) -> Result<Vec<VocabularyWordRecord>, String> {
-        let conn = db::open_db(app)?;
+        Self::list_words_conn(&db::open_db(app)?)
+    }
 
+    fn list_words_conn(conn: &sqlite::Connection) -> Result<Vec<VocabularyWordRecord>, String> {
         let mut stmt = conn
             .prepare(
                 "SELECT id, word, translation, phonetic, example, group_id, created_at, review_count, last_reviewed_at FROM vocabulary_words ORDER BY review_count ASC",
@@ -143,7 +180,8 @@ impl VocabularyStore {
                     let group_id: String = stmt.read(5).unwrap_or_default();
                     let created_at: i64 = stmt.read(6).unwrap_or(0);
                     let review_count: i32 = stmt.read(7).unwrap_or(0.0_f64) as i32;
-                    let last_reviewed_at: Option<i64> = stmt.read(8).ok();
+                    let last_reviewed_at: Option<i64> =
+                        stmt.read::<i64, _>(8).ok().filter(|v| *v != 0);
                     records.push(VocabularyWordRecord {
                         id,
                         word,
@@ -161,5 +199,88 @@ impl VocabularyStore {
             }
         }
         Ok(records)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::apply_schema;
+
+    fn test_conn() -> sqlite::Connection {
+        let conn = sqlite::open(":memory:").expect("内存库应可打开");
+        apply_schema(&conn).expect("建表应成功");
+        conn
+    }
+
+    #[test]
+    fn add_group_then_list_roundtrip() {
+        let conn = test_conn();
+        let id = VocabularyStore::add_group_conn(&conn, "四级核心", "#ff0000").unwrap();
+
+        let groups = VocabularyStore::list_groups_conn(&conn).unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].id, id);
+        assert_eq!(groups[0].name, "四级核心");
+        assert_eq!(groups[0].color, "#ff0000");
+        assert!(groups[0].created_at > 0, "created_at 应写入真实时间戳");
+    }
+
+    #[test]
+    fn add_word_persists_all_columns() {
+        let conn = test_conn();
+        let group_id = VocabularyStore::add_group_conn(&conn, "g", "#000000").unwrap();
+        VocabularyStore::add_word_conn(&conn, "apple", "苹果", &group_id, Some("/ˈæpl/"), Some("an apple"))
+            .unwrap();
+
+        let words = VocabularyStore::list_words_conn(&conn).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "apple");
+        assert_eq!(words[0].translation, "苹果");
+        assert_eq!(words[0].group_id, group_id);
+        assert_eq!(words[0].phonetic.as_deref(), Some("/ˈæpl/"));
+        assert_eq!(words[0].example.as_deref(), Some("an apple"));
+        assert!(words[0].created_at > 0);
+        assert_eq!(words[0].review_count, 0);
+        assert!(words[0].last_reviewed_at.is_none());
+    }
+
+    #[test]
+    fn add_word_defaults_optional_fields_to_empty() {
+        let conn = test_conn();
+        VocabularyStore::add_word_conn(&conn, "book", "书", "grp_x", None, None).unwrap();
+
+        let words = VocabularyStore::list_words_conn(&conn).unwrap();
+        assert_eq!(words[0].phonetic.as_deref(), Some(""));
+        assert_eq!(words[0].example.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn delete_group_cascades_to_its_words() {
+        let conn = test_conn();
+        let keep = VocabularyStore::add_group_conn(&conn, "保留", "#111111").unwrap();
+        let drop = VocabularyStore::add_group_conn(&conn, "删除", "#222222").unwrap();
+        VocabularyStore::add_word_conn(&conn, "apple", "苹果", &drop, None, None).unwrap();
+        VocabularyStore::add_word_conn(&conn, "pear", "梨", &keep, None, None).unwrap();
+
+        VocabularyStore::delete_group_conn(&conn, &drop).unwrap();
+
+        assert_eq!(VocabularyStore::list_groups_conn(&conn).unwrap().len(), 1);
+        let words = VocabularyStore::list_words_conn(&conn).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "pear");
+    }
+
+    #[test]
+    fn delete_word_removes_only_target() {
+        let conn = test_conn();
+        let id_a = VocabularyStore::add_word_conn(&conn, "a", "甲", "g", None, None).unwrap();
+        VocabularyStore::add_word_conn(&conn, "b", "乙", "g", None, None).unwrap();
+
+        VocabularyStore::delete_word_conn(&conn, &id_a).unwrap();
+
+        let words = VocabularyStore::list_words_conn(&conn).unwrap();
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].word, "b");
     }
 }
