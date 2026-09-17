@@ -165,6 +165,10 @@ export async function reorderApiKeys(ordered: string[]): Promise<void> {
 
 // ==================== Dictionary Paths ====================
 
+export async function getDictPaths(): Promise<string[]> {
+  return invoke<string[]>("get_dict_paths_cmd");
+}
+
 export async function saveDictPaths(paths: string[]): Promise<void> {
   await invoke("save_dict_paths_cmd", { paths });
 }

@@ -5,6 +5,7 @@ import { GeneralSection } from "./settings/GeneralSection";
 import { TranslationSection } from "./settings/TranslationSection";
 import { AppearanceSection } from "./settings/AppearanceSection";
 import { DictionarySection } from "./settings/DictionarySection";
+import { ApiKeySection } from "./settings/ApiKeySection";
 import { ShortcutSection } from "./settings/ShortcutSection";
 
 interface SettingsPanelProps {
@@ -36,8 +37,19 @@ const navGroups: NavGroup[] = [
     items: [
       { id: "source-lang", label: "默认源语言", sectionId: "section-source-lang" },
       { id: "target-lang", label: "默认目标语言", sectionId: "section-target-lang" },
-      { id: "api-keys", label: "API Key", sectionId: "section-api-keys" },
       { id: "auto-detect", label: "自动检测", sectionId: "section-auto-detect" },
+    ],
+  },
+  {
+    title: "词典",
+    items: [
+      { id: "dict-paths", label: "词典目录", sectionId: "section-dict-paths" },
+    ],
+  },
+  {
+    title: "翻译服务",
+    items: [
+      { id: "api-keys", label: "API Key", sectionId: "section-api-keys" },
     ],
   },
   {
@@ -47,12 +59,6 @@ const navGroups: NavGroup[] = [
       { id: "font-size", label: "字体大小", sectionId: "section-font-size" },
       { id: "opacity", label: "不透明度", sectionId: "section-opacity" },
       { id: "hide-delay", label: "自动隐藏延迟", sectionId: "section-hide-delay" },
-    ],
-  },
-  {
-    title: "词典",
-    items: [
-      { id: "dict-paths", label: "词典目录", sectionId: "section-dict-paths" },
     ],
   },
   {
@@ -225,8 +231,12 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             />
             <TranslationSection
               translation={settings.translation}
-              settings={settings}
               onChange={(key, value) => updateSetting("translation", key, value)}
+              registerRef={registerRef}
+            />
+            <DictionarySection registerRef={registerRef} />
+            <ApiKeySection
+              settings={settings}
               onUpdateSettings={setSettings}
               registerRef={registerRef}
             />
@@ -235,7 +245,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               onChange={(key, value) => updateSetting("appearance", key, value)}
               registerRef={registerRef}
             />
-            <DictionarySection registerRef={registerRef} />
             <ShortcutSection registerRef={registerRef} />
           </div>
         </div>

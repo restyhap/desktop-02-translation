@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { saveDictPaths as persistDictPaths } from "@/storage";
+import { useState, useEffect } from "react";
+import { getDictPaths, saveDictPaths as persistDictPaths } from "@/storage";
 import { useToast } from "@/components/ui/Toast";
 
 interface DictionarySectionProps {
@@ -9,6 +9,15 @@ interface DictionarySectionProps {
 export function DictionarySection({ registerRef }: DictionarySectionProps) {
   const { showToast } = useToast();
   const [dictPaths, setDictPaths] = useState<string[]>([]);
+
+  useEffect(() => {
+    getDictPaths()
+      .then(setDictPaths)
+      .catch((error) => {
+        console.error("[Settings] 加载词典路径失败:", error);
+        showToast("加载词典路径失败", "error");
+      });
+  }, []);
 
   const saveDictPaths = async (paths: string[]) => {
     try {
