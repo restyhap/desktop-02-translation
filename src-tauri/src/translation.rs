@@ -9,6 +9,82 @@ pub struct TranslationResult {
     pub engine: String,
 }
 
+/// MD5 hex 摘要（翻译 API 签名共用）
+fn md5_hex(input: &str) -> String {
+    let mut hasher = Md5::new();
+    hasher.update(input);
+    format!("{:x}", hasher.finalize())
+}
+
+// ==================== 组合服务：缓存查找 + 引擎分发 ====================
+
+/// 翻译缓存查找：命中历史库则跳过 API（省配额/离线可用）
+fn find_cached_translation(
+    app: &tauri::AppHandle,
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    engine: &str,
+) -> Option<String> {
+    let conn = crate::db::open_db(app).ok()?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT translated_text FROM translation_history \
+             WHERE source_text = ?1 AND source_lang = ?2 AND target_lang = ?3 AND engine = ?4 \
+             ORDER BY timestamp DESC LIMIT 1",
+        )
+        .ok()?;
+    stmt.bind((1, text)).ok()?;
+    stmt.bind((2, source_lang)).ok()?;
+    stmt.bind((3, target_lang)).ok()?;
+    stmt.bind((4, engine)).ok()?;
+    match stmt.next() {
+        Ok(sqlite::State::Row) => {
+            let translated: String = stmt.read(0).ok()?;
+            Some(translated)
+        }
+        _ => None,
+    }
+}
+
+/// 组合翻译流程：缓存命中直接返回，否则读取 API Key 并调用对应引擎
+pub async fn translate_with_cache(
+    app: &tauri::AppHandle,
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    engine: &str,
+) -> Result<TranslationResult, String> {
+    // 缓存命中直接返回，跳过 API（省配额/离线可用）
+    if let Some(translated) = find_cached_translation(app, text, source_lang, target_lang, engine) {
+        return Ok(TranslationResult {
+            text: translated,
+            source_lang: source_lang.to_string(),
+            target_lang: target_lang.to_string(),
+            engine: engine.to_string(),
+        });
+    }
+
+    // 获取 API Key 和 App ID
+    let key_record = crate::keys::KeyManager::get_key_with_appid(app, engine)
+        .map_err(|e| format!("读取 API Key 失败: {}", e))?;
+
+    let (api_key, app_id) = match key_record {
+        Some((key, app_id)) if !key.is_empty() => (key, app_id),
+        _ => return Err(format!("未找到 {} 的 API Key，请在设置中配置", engine)),
+    };
+
+    match engine {
+        "google" => translate_with_google(text, source_lang, target_lang, &api_key).await,
+        "deepl" => translate_with_deepl(text, source_lang, target_lang, &api_key).await,
+        "baidu" => translate_with_baidu(text, source_lang, target_lang, &app_id, &api_key).await,
+        "youdao" => translate_with_youdao(text, source_lang, target_lang, &app_id, &api_key).await,
+        "caiyun" => translate_with_caiyun(text, source_lang, target_lang, &api_key).await,
+        "ali" => translate_with_alibaba(text, source_lang, target_lang, &api_key, &app_id).await,
+        _ => Err(format!("不支持的翻译引擎: {}", engine)),
+    }
+}
+
 // ==================== Google Translate ====================
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -163,11 +239,7 @@ pub async fn translate_with_baidu(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() % 100000)
         .unwrap_or(0);
-    let sign_str = format!("{}{}{}{}", app_id, text, salt, secret_key);
-    let mut hasher = Md5::new();
-    hasher.update(&sign_str);
-    let result = hasher.finalize();
-    let sign_hex = format!("{:x}", result);
+    let sign_hex = md5_hex(&format!("{}{}{}{}", app_id, text, salt, secret_key));
 
     let url = format!(
         "https://fanyi-api.baidu.com/api/trans/vip/translate?q={}&from={}&to={}&appid={}&salt={}&sign={}",
@@ -246,11 +318,7 @@ pub async fn translate_with_youdao(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() % 100000)
         .unwrap_or(0);
-    let sign_str = format!("{}{}{}{}", app_key, text, salt, secret_key);
-    let mut hasher = Md5::new();
-    hasher.update(&sign_str);
-    let result = hasher.finalize();
-    let sign_hex = format!("{:x}", result);
+    let sign_hex = md5_hex(&format!("{}{}{}{}", app_key, text, salt, secret_key));
 
     let url = format!(
         "https://openapi.youdao.com/api?q={}&from={}&to={}&appKey={}&salt={}&sign={}&signType=v3",

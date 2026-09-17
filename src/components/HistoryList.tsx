@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { store } from "@/storage";
+import { mapRecordToUi } from "@/storage/translation";
 import type { TranslationResult } from "@/types/translation";
 
 interface HistoryListProps {
@@ -16,16 +17,7 @@ export function HistoryList({ onSelect, onUpdate }: HistoryListProps) {
     setLoading(true);
     try {
       const records = await store.getTranslations();
-      const translations: TranslationResult[] = records.map(r => ({
-        id: r.id,
-        sourceText: r.source_text,
-        translatedText: r.translated_text,
-        sourceLang: r.source_lang as TranslationResult["sourceLang"],
-        targetLang: r.target_lang as TranslationResult["targetLang"],
-        engine: r.engine,
-        timestamp: r.timestamp,
-        favorite: r.favorite === 1,
-      }));
+      const translations: TranslationResult[] = records.map(mapRecordToUi);
       setHistory(translations);
     } catch (error) {
       console.error("[HistoryList] 加载历史失败:", error);

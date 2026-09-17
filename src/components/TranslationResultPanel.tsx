@@ -1,13 +1,8 @@
 import { useState, useEffect } from "react";
 import type { TranslationResult } from "@/types/translation";
-import { listApiKeys } from "@/storage";
+import { listApiKeys, type ApiKeyOption } from "@/storage";
 import { TTSButton } from "@/components/TTSButton";
 import { DictEntryView, type DictEntry } from "@/components/DictEntryView";
-
-interface ApiKeyInfo {
-  service_name: string;
-  display_name: string;
-}
 
 interface TranslationResultProps {
   result: TranslationResult | null;
@@ -21,7 +16,7 @@ interface TranslationResultProps {
 }
 
 export function TranslationResultPanel({ result, loading = false, error = null, currentEngine, onEngineChange, dictEntry = null, dictLoading = false, dictError = null }: TranslationResultProps) {
-  const [engines, setEngines] = useState<ApiKeyInfo[]>([]);
+  const [engines, setEngines] = useState<ApiKeyOption[]>([]);
   const [engineLoading, setEngineLoading] = useState(true);
 
   useEffect(() => {
@@ -32,18 +27,7 @@ export function TranslationResultPanel({ result, loading = false, error = null, 
       }
       setEngineLoading(false);
     }).catch(() => {
-      const stored = localStorage.getItem("apiKeys");
-      if (stored) {
-        try {
-          const keys: ApiKeyInfo[] = JSON.parse(stored);
-          setEngines(keys);
-          if (keys.length > 0 && !currentEngine) {
-            onEngineChange?.(keys[0].service_name);
-          }
-        } catch (e) {
-          console.error("解析 localStorage 失败:", e);
-        }
-      }
+      setEngines([]);
       setEngineLoading(false);
     });
   }, []);

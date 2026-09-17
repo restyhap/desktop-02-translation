@@ -1,29 +1,27 @@
 import { useState, useEffect } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { initDB, saveTranslationHistory } from "@/storage";
+import { dictBuild, dictHasDb as hasDictDb, dictLookup, listDicts } from "@/storage/dict";
+import { getDBStatus, initDB } from "@/storage";
 import { HistoryList } from "@/components/HistoryList";
 import { SettingsPanel } from "@/components/SettingsPanel";
+import { useTranslationState } from "@/hooks/useTranslationState";
 import { TranslationInput } from "@/components/TranslationInput";
 import { TranslationResultPanel } from "@/components/TranslationResultPanel";
 import { VocabularyPanel } from "@/components/VocabularyPanel";
 import { DictionaryPanel, type DictInfo } from "@/components/DictionaryPanel";
 import type { DictEntry as DictEntryType } from "@/components/DictEntryView";
-import { translate } from "@/storage/translation";
 import logoUrl from "@/assets/logo.png";
-import type { TranslationResult, Language, TranslationEngine, TranslationRecord } from "@/types/translation";
+import type { TranslationResult, Language, TranslationEngine } from "@/types/translation";
 
 type SidebarTab = "history" | "vocabulary" | "settings" | "dictionary";
 
 function App() {
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("history");
-  const [translationResult, setTranslationResult] = useState<TranslationResult | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [text, setText] = useState("");
   const [sourceLang, setSourceLang] = useState<Language>("zh");
   const [dbError, setDbError] = useState<string | null>(null);
   const [currentEngine, setCurrentEngine] = useState<string>("");
-  const [historyVersion, setHistoryVersion] = useState(0);
   const [dicts, setDicts] = useState<DictInfo[]>([]);
   const [activeDict, setActiveDict] = useState<number | null>(null);
   const [dictEntry, setDictEntry] = useState<DictEntryType | null>(null);
@@ -32,12 +30,21 @@ function App() {
   const [dictBuilding, setDictBuilding] = useState(false);
   const [dictHasDb, setDictHasDb] = useState(true);
 
+  const {
+    result: translationResult,
+    setResult: setTranslationResult,
+    loading: translationLoading,
+    error: translationError,
+    historyVersion,
+    translateAndApply,
+  } = useTranslationState();
+
   const loadDicts = async () => {
     try {
-      const has = await invoke<boolean>("dict_has_db_cmd");
+      const has = await hasDictDb();
       setDictHasDb(has);
       if (has) {
-        const r = await invoke<{ dictionaries: DictInfo[] }>("dict_list_cmd");
+        const r = await listDicts();
         const withData = r.dictionaries.filter((d) => d.entry_count > 0);
         const list = withData.length > 0 ? withData : r.dictionaries;
         setDicts(list);
@@ -61,7 +68,7 @@ function App() {
     // 等待 Tauri IPC 就绪
     const initWhenReady = async () => {
       try {
-        await invoke("get_db_status_cmd");
+        await getDBStatus();
         if (!cancelled) {
           initDB().catch((err) => {
             console.error("[App] 数据库初始化失败:", err);
@@ -94,46 +101,11 @@ function App() {
     };
   }, []);
 
-  const [translationLoading, setTranslationLoading] = useState(false);
-  const [translationError, setTranslationError] = useState<string | null>(null);
-
   const handleTranslate = async (text: string, sourceLang: Language, targetLang: Language, engine: TranslationEngine) => {
-    setTranslationLoading(true);
-    setTranslationError(null);
     setDictEntry(null);
     setDictError(null);
-    try {
-      const result = await import("@/storage/translation").then(m => m.translate(text, sourceLang, targetLang, engine));
-      const translationRecord: TranslationRecord = {
-        id: crypto.randomUUID(),
-        source_text: text,
-        translated_text: result.text,
-        source_lang: result.source_lang,
-        target_lang: result.target_lang,
-        engine: result.engine,
-        timestamp: Date.now(),
-        favorite: 0,
-      };
-      await saveTranslationHistory(translationRecord);
-      setSourceLang(sourceLang);
-      setHistoryVersion(v => v + 1);
-      setTranslationResult({
-        id: translationRecord.id,
-        sourceText: translationRecord.source_text,
-        translatedText: translationRecord.translated_text,
-        sourceLang: sourceLang as Language,
-        targetLang: targetLang as Language,
-        engine: translationRecord.engine as TranslationEngine,
-        timestamp: translationRecord.timestamp,
-        favorite: translationRecord.favorite === 1,
-      });
-    } catch (error) {
-      console.error("[App] 翻译失败:", error);
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      setTranslationError(errorMsg);
-    } finally {
-      setTranslationLoading(false);
-    }
+    await translateAndApply(text, sourceLang, targetLang, engine);
+    setSourceLang(sourceLang);
   };
 
   const handleHistorySelect = (item: TranslationResult) => {
@@ -146,33 +118,7 @@ function App() {
   };
 
   const handleDictTranslate = async (text: string) => {
-    try {
-      const result = await translate(text, sourceLang, "zh", currentEngine || "google");
-      const translationRecord: TranslationRecord = {
-        id: crypto.randomUUID(),
-        source_text: text,
-        translated_text: result.text,
-        source_lang: result.source_lang,
-        target_lang: result.target_lang,
-        engine: result.engine,
-        timestamp: Date.now(),
-        favorite: 0,
-      };
-      await saveTranslationHistory(translationRecord);
-      setHistoryVersion((v) => v + 1);
-      setTranslationResult({
-        id: translationRecord.id,
-        sourceText: translationRecord.source_text,
-        translatedText: translationRecord.translated_text,
-        sourceLang: sourceLang as Language,
-        targetLang: translationRecord.target_lang as Language,
-        engine: translationRecord.engine as TranslationEngine,
-        timestamp: translationRecord.timestamp,
-        favorite: translationRecord.favorite === 1,
-      });
-    } catch (error) {
-      console.error("[App] 词典段落翻译失败:", error);
-    }
+    await translateAndApply(text, sourceLang, "zh", currentEngine || "google", { silent: true });
   };
 
   // 右侧输入框联动: 单词 → 查词典显示释义; 段落 → 翻译
@@ -188,10 +134,7 @@ function App() {
     setDictLoading(true);
     setDictError(null);
     try {
-      const result = await invoke<{ found: boolean; entry: DictEntryType | null }>("dict_lookup_cmd", {
-        word: t,
-        dictionaryId: activeDict,
-      });
+      const result = await dictLookup<DictEntryType>(t, activeDict);
       if (result.found && result.entry) {
         setDictEntry(result.entry);
       } else {
@@ -213,7 +156,7 @@ function App() {
   const handleDictBuild = async () => {
     setDictBuilding(true);
     try {
-      await invoke("dict_build_cmd");
+      await dictBuild();
       await loadDicts();
     } catch (err) {
       console.error("[App] 词典构建失败:", err);

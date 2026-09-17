@@ -11,15 +11,10 @@ type ResizeDirection =
   | "SouthEast"
   | "SouthWest"
   | "West";
-import { translate } from "@/storage/translation";
-import { listApiKeys, saveTranslationHistory, store } from "@/storage";
+import { errorResult, translateAndSave } from "@/storage/translation";
+import { listApiKeys, store, type ApiKeyOption } from "@/storage";
 import { TTSButton } from "@/components/TTSButton";
-import type { TranslationResult, TranslationRecord, Language } from "@/types/translation";
-
-interface ApiKeyInfo {
-  service_name: string;
-  display_name: string;
-}
+import type { TranslationResult, Language } from "@/types/translation";
 
 interface TranslateEvent {
   text: string;
@@ -32,7 +27,7 @@ function TranslatePopup() {
   const [visible, setVisible] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [engines, setEngines] = useState<ApiKeyInfo[]>([]);
+  const [engines, setEngines] = useState<ApiKeyOption[]>([]);
   const [currentEngine, setCurrentEngine] = useState<string>("");
   const [settings, setSettings] = useState({ sourceLang: "en" as Language, targetLang: "zh" as Language, opacity: 100, hideDelay: 5 });
   const lastTextRef = useRef<string>("");
@@ -68,18 +63,7 @@ function TranslatePopup() {
         setCurrentEngine(keys[0].service_name);
       }
     }).catch(() => {
-      const stored = localStorage.getItem("apiKeys");
-      if (stored) {
-        try {
-          const keys: ApiKeyInfo[] = JSON.parse(stored);
-          setEngines(keys);
-          if (keys.length > 0 && !currentEngine) {
-            setCurrentEngine(keys[0].service_name);
-          }
-        } catch (e) {
-          console.error("解析 localStorage 失败:", e);
-        }
-      }
+      setEngines([]);
     });
   }, []);
 
@@ -104,43 +88,13 @@ function TranslatePopup() {
     // 弹窗位置由 Rust 侧负责（基于光标所在显示器 + 逻辑像素边界修正），前端不做定位
 
     try {
-      const apiResult = await translate(text, settings.sourceLang, settings.targetLang, engine);
-      const translatedResult: TranslationResult = {
-        id: Date.now().toString(),
-        sourceText: text,
-        translatedText: apiResult.text,
-        sourceLang: apiResult.source_lang as TranslationResult["sourceLang"],
-        targetLang: apiResult.target_lang as TranslationResult["targetLang"],
-        engine: apiResult.engine as TranslationResult["engine"],
-        timestamp: Date.now(),
-        favorite: false,
-      };
+      const translatedResult = await translateAndSave(text, settings.sourceLang, settings.targetLang, engine);
       setResult(translatedResult);
-
-      const record: TranslationRecord = {
-        id: translatedResult.id,
-        source_text: translatedResult.sourceText,
-        translated_text: translatedResult.translatedText,
-        source_lang: translatedResult.sourceLang,
-        target_lang: translatedResult.targetLang,
-        engine: translatedResult.engine,
-        timestamp: translatedResult.timestamp,
-        favorite: 0,
-      };
-      saveTranslationHistory(record).catch((e: any) => console.error("[popup] 保存失败:", e));
     } catch (err) {
       console.error("[popup] 翻译失败:", err);
-      setError(err instanceof Error ? err.message : "翻译失败");
-      setResult({
-        id: Date.now().toString(),
-        sourceText: text,
-        translatedText: `翻译失败: ${err instanceof Error ? err.message : "未知错误"}`,
-        sourceLang: "en",
-        targetLang: "zh",
-        engine: engine,
-        timestamp: Date.now(),
-        favorite: false,
-      });
+      const message = err instanceof Error ? err.message : "翻译失败";
+      setError(message);
+      setResult(errorResult(text, engine, settings.sourceLang, settings.targetLang));
     } finally {
       setLoading(false);
     }

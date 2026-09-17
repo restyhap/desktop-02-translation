@@ -13,6 +13,17 @@ pub struct DbInitStatus {
     pub schema_version: i32,
 }
 
+pub fn open_db(app: &tauri::AppHandle) -> Result<sqlite::Connection, String> {
+    sqlite::open(Database::get_db_path(app)).map_err(|e| format!("打开数据库失败: {}", e))
+}
+
+pub fn unix_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 pub struct Database;
 
 impl Database {
@@ -31,7 +42,7 @@ impl Database {
 
     pub fn init(app: &tauri::AppHandle) -> Result<DbInitStatus, String> {
         let db_path = Self::get_db_path(app);
-        let conn = sqlite::open(&db_path).map_err(|e| format!("打开数据库失败: {}", e))?;
+        let conn = open_db(app)?;
 
         let mut tables_created = Vec::new();
 
@@ -171,17 +182,8 @@ pub struct EngineManager;
 
 impl EngineManager {
     pub fn init(app: &tauri::AppHandle) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS translation_engines (
-                service_name TEXT PRIMARY KEY,
-                display_name TEXT NOT NULL,
-                url TEXT NOT NULL,
-                requires_app_id INTEGER NOT NULL DEFAULT 0,
-                requires_api_key INTEGER NOT NULL DEFAULT 1
-            )",
-        ).map_err(|e| format!("创建翻译引擎表失败: {}", e))?;
-        // 预置常见引擎（仅插入不存在的）
+        let conn = open_db(app)?;
+        // 预置常见引擎（仅插入不存在的；表结构由 Database::init 统一创建）
         let engines = [
             ("google", "谷歌翻译", "https://translation.googleapis.com/language/translate/v2", false, true),
             ("deepl", "DeepL", "https://api.deepl.com/v2/translate", false, true),
@@ -207,7 +209,7 @@ impl EngineManager {
     }
 
     pub fn list(app: &tauri::AppHandle) -> Result<Vec<TranslationEngine>, String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        let conn = open_db(app)?;
         let mut stmt = conn
             .prepare("SELECT service_name, display_name, url, requires_app_id, requires_api_key FROM translation_engines ORDER BY display_name")
             .map_err(|e| format!("{}", e))?;
@@ -231,7 +233,7 @@ impl EngineManager {
     }
 
     pub fn add(app: &tauri::AppHandle, service_name: &str, display_name: &str, url: &str, requires_app_id: bool, requires_api_key: bool) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        let conn = open_db(app)?;
         let mut stmt = conn
             .prepare(
                 "INSERT OR REPLACE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -247,7 +249,7 @@ impl EngineManager {
     }
 
     pub fn delete(app: &tauri::AppHandle, service_name: &str) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        let conn = open_db(app)?;
         let mut stmt = conn
             .prepare("DELETE FROM translation_engines WHERE service_name = ?1")
             .map_err(|e| format!("删除翻译引擎失败: {}", e))?;
@@ -261,10 +263,8 @@ pub struct DictPaths;
 
 impl DictPaths {
     fn conn(app: &tauri::AppHandle) -> Result<sqlite::Connection, String> {
-        let c = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
-        c.execute("CREATE TABLE IF NOT EXISTS dict_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-            .map_err(|e| format!("创建 dict_settings 表失败: {}", e))?;
-        Ok(c)
+        // 表结构由 Database::init 统一创建
+        open_db(app)
     }
 
     pub fn get(app: &tauri::AppHandle) -> Result<Vec<String>, String> {

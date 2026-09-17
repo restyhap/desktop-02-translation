@@ -1,4 +1,3 @@
-use super::db::Database;
 use serde::Serialize;
 
 #[derive(Debug, Serialize, Clone)]
@@ -69,7 +68,7 @@ impl KeyManager {
         key: &str,
         sort: i64,
     ) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
 
         let display_name = if display_name.is_empty() {
@@ -98,7 +97,7 @@ impl KeyManager {
     }
 
     pub fn get_key(app: &tauri::AppHandle, service: &str) -> Result<Option<String>, String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
         let mut stmt = conn
             .prepare("SELECT api_key FROM api_keys WHERE service_name = ?")
@@ -118,7 +117,7 @@ impl KeyManager {
         app: &tauri::AppHandle,
         service: &str,
     ) -> Result<Option<(String, String)>, String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
         let mut stmt = conn
             .prepare("SELECT api_key, app_id FROM api_keys WHERE service_name = ?")
@@ -136,7 +135,7 @@ impl KeyManager {
     }
 
     pub fn list_keys(app: &tauri::AppHandle) -> Result<Vec<ApiKeyRecord>, String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
 
         let mut stmt = conn
@@ -182,7 +181,7 @@ impl KeyManager {
     }
 
     pub fn reorder_keys(app: &tauri::AppHandle, ordered: &[String]) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
         for (i, service) in ordered.iter().enumerate() {
             let mut stmt = conn
@@ -196,7 +195,7 @@ impl KeyManager {
     }
 
     pub fn delete_key(app: &tauri::AppHandle, service: &str) -> Result<(), String> {
-        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        let conn = super::db::open_db(app)?;
         Self::ensure_schema(&conn)?;
         let mut stmt = conn
             .prepare("DELETE FROM api_keys WHERE service_name = ?")

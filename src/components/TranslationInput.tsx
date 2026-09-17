@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { dictSuggest } from "@/storage/dict";
 import { SUPPORTED_LANGUAGES } from "@/types/translation";
 import { TTSButton } from "@/components/TTSButton";
 import type { Language, TranslationEngine } from "@/types/translation";
@@ -33,10 +33,7 @@ export function TranslationInput({ onTranslate, onDictLookup, defaultText, engin
     }
     const seq = ++seqRef.current;
     try {
-      const result = await invoke<{ words: string[] }>("dict_suggest_cmd", {
-        query: text.trim(),
-        dictionaryId,
-      });
+      const result = await dictSuggest(text.trim(), dictionaryId);
       if (seq === seqRef.current) {
         setSuggestions(result.words.slice(0, 8));
         setShowSuggestions(true);

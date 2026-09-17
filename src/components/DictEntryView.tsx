@@ -1,17 +1,6 @@
 import { useState, useMemo } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { dictGetResource, dictLoadResources, type DictResource } from "@/storage/dict";
 import { parseDefinition, type DictLine } from "@/lib/parseDefinition";
-
-export interface DictResource {
-  kind: string;
-  filename: string;
-  zip_file: string;
-}
-
-interface DictResourceData {
-  mime: string;
-  data_base64: string;
-}
 
 export interface DictEntry {
   word: string;
@@ -101,9 +90,7 @@ function ResourceChips({ entry }: { entry: DictEntry }) {
     if (resources.length > 0 || loadingRes) return;
     setLoadingRes(true);
     try {
-      const res = await invoke<DictResource[]>("dict_load_resource_cmd", {
-        word: entry.word,
-      });
+      const res = await dictLoadResources(entry.word);
       setResources(res);
     } catch (err) {
       console.error("[Dictionary] 加载资源失败:", err);
@@ -114,10 +101,7 @@ function ResourceChips({ entry }: { entry: DictEntry }) {
 
   const playAudio = async (res: DictResource) => {
     try {
-      const data = await invoke<DictResourceData>("dict_get_resource_cmd", {
-        zipFile: res.zip_file,
-        filename: res.filename,
-      });
+      const data = await dictGetResource(res.zip_file, res.filename);
       const url = `data:${data.mime};base64,${data.data_base64}`;
       setAudioUrl(url);
       new Audio(url).play().catch((e) => console.error("播放失败:", e));
@@ -129,10 +113,7 @@ function ResourceChips({ entry }: { entry: DictEntry }) {
   const showImage = async (res: DictResource) => {
     if (images.some((i) => i.filename === res.filename)) return;
     try {
-      const data = await invoke<DictResourceData>("dict_get_resource_cmd", {
-        zipFile: res.zip_file,
-        filename: res.filename,
-      });
+      const data = await dictGetResource(res.zip_file, res.filename);
       const url = `data:${data.mime};base64,${data.data_base64}`;
       setImages((prev) => [...prev, { filename: res.filename, url }]);
     } catch (err) {

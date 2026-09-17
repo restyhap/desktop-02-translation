@@ -120,12 +120,63 @@ export async function getApiKey(service: string): Promise<string | null> {
   return invoke("get_api_key_cmd", { service });
 }
 
-export async function listApiKeys(): Promise<any[]> {
+/** API Key 列表项（与 Rust 端 ApiKeyRecord 对齐的子集） */
+export interface ApiKeyOption {
+  service_name: string;
+  display_name: string;
+}
+
+export async function listApiKeys(): Promise<ApiKeyOption[]> {
   return invoke("list_api_keys_cmd");
+}
+
+export async function getEngines<T>(): Promise<T[]> {
+  return invoke<T[]>("get_engines_cmd");
 }
 
 export async function deleteApiKey(service: string): Promise<void> {
   await invoke("delete_api_key_cmd", { service });
+}
+
+// ==================== Translation Engine ====================
+
+export async function addEngine(
+  serviceName: string,
+  displayName: string,
+  url: string,
+  requiresAppId: boolean
+): Promise<void> {
+  await invoke("add_engine_cmd", {
+    service_name: serviceName,
+    display_name: displayName,
+    url,
+    requires_app_id: requiresAppId,
+    requires_api_key: true,
+  });
+}
+
+export async function deleteEngine(serviceName: string): Promise<void> {
+  await invoke("delete_engine_cmd", { service_name: serviceName });
+}
+
+export async function reorderApiKeys(ordered: string[]): Promise<void> {
+  await invoke("reorder_api_keys_cmd", { ordered });
+}
+
+// ==================== Dictionary Paths ====================
+
+export async function saveDictPaths(paths: string[]): Promise<void> {
+  await invoke("save_dict_paths_cmd", { paths });
+}
+
+// ==================== Shortcuts ====================
+
+export async function getShortcuts<T>(): Promise<T> {
+  return invoke<T>("get_shortcuts_cmd");
+}
+
+export async function updateShortcuts<T extends object>(config: T): Promise<void> {
+  await invoke("update_shortcuts_cmd", { config });
 }
 
 // ==================== Storage Abstraction Layer ====================
@@ -206,6 +257,14 @@ export class Store {
   async saveSettings(settings: Record<string, any>): Promise<void> {
     await invoke("save_all_settings_cmd", { settings });
   }
+}
+
+export async function getSettings<T = Record<string, any>>(): Promise<T> {
+  return invoke("get_all_settings_cmd");
+}
+
+export async function saveSettings(settings: Record<string, any>): Promise<void> {
+  await invoke("save_all_settings_cmd", { settings });
 }
 
 export const store = new Store();
