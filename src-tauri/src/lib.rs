@@ -1145,9 +1145,9 @@ fn dict_init_cmd(app: tauri::AppHandle) -> Result<bool, String> {
 
 #[tauri::command]
 async fn dict_build_cmd(app: tauri::AppHandle) -> Result<String, String> {
-    Ok(tokio::task::spawn_blocking(move || {
-        dict::Dictionary::build(&app)
-    }).await.map_err(|e| format!("构建任务失败: {}", e))??)
+    tokio::task::spawn_blocking(move || dict::Dictionary::build(&app))
+        .await
+        .map_err(|e| format!("构建任务失败: {}", e))?
 }
 
 #[tauri::command]

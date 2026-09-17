@@ -49,7 +49,7 @@ fn main() {
             let dir_path = entry.path();
             let dir_name = dir_path.file_name().unwrap().to_string_lossy().to_string();
             if dir_name.starts_with('.') { continue; }
-            if let Some(dz_path) = find_file(dir_path.as_ref(), |p| p.extension().map(|e| e == "dz").unwrap_or(false)) {
+            if let Some(dz_path) = find_file(dir_path, |p| p.extension().map(|e| e == "dz").unwrap_or(false)) {
                 println!("\n📚 {}\n   解析中...", dir_name);
                 match process_dict(&conn, input_dir, &dz_path, &dir_name) {
                     Ok(c) => { total += c; println!("   ✅ {} 个词条", c); }
@@ -71,15 +71,27 @@ fn init_schema(conn: &Connection) {
     conn.execute("CREATE INDEX IF NOT EXISTS idx_entries_word ON entries_data(word)").expect("索引失败");
 }
 
-fn process_dict(conn: &Connection, input_dir: &str, dz_path: &PathBuf, dict_name: &str) -> Result<usize, String> {
+fn process_dict(conn: &Connection, input_dir: &str, dz_path: &Path, dict_name: &str) -> Result<usize, String> {
     let text = decompress_dsl_dz(dz_path)?;
     let info = parse_meta(&text, dict_name);
     // ponytail: 前一个字典若中途报错会留下未提交事务, 这里先清掉, 避免后续字典全部失败
     conn.execute("ROLLBACK").ok();
     conn.execute("BEGIN IMMEDIATE TRANSACTION")
         .map_err(|e| format!("事务开始失败: {}", e))?;
-    conn.execute(&format!("INSERT INTO dictionaries (name, dict_dir, lang_from, lang_to, entry_count, dz_path) VALUES ('{}', '{}', '{}', '{}', {}, '{}')", info.0, input_dir, info.1, info.2.unwrap_or_default(), info.3, dz_path.to_string_lossy()))
-        .map_err(|e| e.to_string())?;
+    {
+        let mut stmt = conn
+            .prepare("INSERT INTO dictionaries (name, dict_dir, lang_from, lang_to, entry_count, dz_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6)")
+            .map_err(|e| e.to_string())?;
+        let lang_to = info.2.clone().unwrap_or_default();
+        let dz_str = dz_path.to_string_lossy().to_string();
+        stmt.bind((1, info.0.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((2, input_dir)).map_err(|e| e.to_string())?;
+        stmt.bind((3, info.1.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((4, lang_to.as_str())).map_err(|e| e.to_string())?;
+        stmt.bind((5, info.3 as i64)).map_err(|e| e.to_string())?;
+        stmt.bind((6, dz_str.as_str())).map_err(|e| e.to_string())?;
+        stmt.next().map_err(|e| e.to_string())?;
+    }
     let dict_id = last_rowid(conn);
     // ponytail: zip 命名不统一——DOCE5 是 `<stem>.dsl.files.zip`, MW11 是 `<stem>.dsl.dz.files.zip`;
     // 直接扫目录匹配后缀, 避免逐个拼名字
@@ -160,7 +172,7 @@ fn word_lower(word: &str) -> String {
     word.to_lowercase()
 }
 
-fn decompress_dsl_dz(path: &PathBuf) -> Result<String, String> {
+fn decompress_dsl_dz(path: &Path) -> Result<String, String> {
     let mut child = std::process::Command::new("gzip").args(["-dc", &path.to_string_lossy()]).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("gzip 启动失败: {}", e))?;
     let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
     let reader = BufReader::new(stdout);
@@ -289,4 +301,68 @@ fn extract_resources(text: &str) -> Vec<(&'static str, String)> {
 
 fn find_file(dir: &Path, pred: impl Fn(&Path) -> bool) -> Option<PathBuf> {
     fs::read_dir(dir).ok()?.filter_map(|e| e.ok()?.path().into()).find(|p| pred(&p.to_path_buf()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_tags_keeps_bold_italic_and_strips_color_margin() {
+        let input = "<b>bird</b> [c darkgray]<i>noun</i>[/c][m1] one sense[/m]";
+        let out = expand_tags(input);
+        assert!(out.contains("<b>bird</b>"), "保留 bold: {out}");
+        assert!(out.contains("<i>noun</i>"), "保留 italic: {out}");
+        assert!(!out.contains("[c"), "剥离颜色标签: {out}");
+        assert!(!out.contains("[m1]"), "剥离边距标签: {out}");
+        assert!(!out.contains("[/c]"), "剥离闭合色标: {out}");
+    }
+
+    #[test]
+    fn expand_tags_drops_sound_ref_entirely() {
+        let input = "start[s]bre_ld45bird.wav[/s]end";
+        let out = expand_tags(input);
+        assert_eq!(out, "startend", "应整段丢弃 [s]..[/s]: {out}");
+    }
+
+    #[test]
+    fn expand_tags_strips_braces_and_restores_escaped_brackets() {
+        let input = "{{ud}}used{{/ud}} [c][com]\\[countable\\][/com][/c]";
+        let out = expand_tags(input);
+        assert!(!out.contains("{{"), "剥离 {{}}: {out}");
+        assert!(out.contains("[countable]"), "还原 \\[ 转义: {out}");
+    }
+
+    #[test]
+    fn expand_tags_collapses_consecutive_newlines() {
+        let out = expand_tags("a\n\n\nb");
+        assert_eq!(out, "a<br>b", "重复 <br> 应折叠: {out}");
+    }
+
+    #[test]
+    fn clean_word_strips_subscript_braces() {
+        assert_eq!(clean_word("vitamin b{[sub]}12{[/sub]}"), "vitamin b12");
+        assert_eq!(clean_word("h{[sub]}2{[/sub]}o"), "h2o");
+        assert_eq!(clean_word("-a-"), "-a-");
+    }
+
+    #[test]
+    fn find_sound_prefers_audio_and_skips_images() {
+        let text = "[s]eagle.jpg[/s] [s]bre_ld45bird.wav[/s]";
+        assert_eq!(find_sound(text).as_deref(), Some("bre_ld45bird.wav"));
+    }
+
+    #[test]
+    fn extract_resources_classifies_by_extension() {
+        let text = "[s]aah00001.wav[/s][s]aardvark.jpg[/s]";
+        let r = extract_resources(text);
+        assert!(r.contains(&("audio", "aah00001.wav".to_string())));
+        assert!(r.contains(&("image", "aardvark.jpg".to_string())));
+    }
+
+    #[test]
+    fn audio_filenames_with_quotes_are_preserved() {
+        let text = "[s]bre_ld41'bout.wav[/s]";
+        assert_eq!(find_sound(text).as_deref(), Some("bre_ld41'bout.wav"));
+    }
 }
