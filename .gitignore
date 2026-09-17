@@ -3,3 +3,11 @@ dist/
 src-tauri/target/
 *.log
 .DS_Store
+
+# 词典数据库（真实库在 app_data_dir，仓库内不应提交）
+*.db
+*.db-journal
+*.db-wal
+
+# Python 缓存
+__pycache__/

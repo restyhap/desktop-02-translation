@@ -1,123 +1,196 @@
+use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
-// 窗口：相邻按键的最大间隔
 const SEQ_WINDOW: Duration = Duration::from_millis(500);
 
-struct State {
+struct Rule {
+    tag: String,
+    required_modifiers: Vec<rdev::Key>,
     key_sequence: Vec<rdev::Key>,
     match_index: usize,
     last_press: Instant,
-    last_mouse_pos: Option<(f64, f64)>,
-    ctrl_held: bool,
-    meta_held: bool,
 }
 
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            key_sequence: vec![rdev::Key::KeyC],
-            match_index: 0,
-            last_press: Instant::now() - SEQ_WINDOW,
-            last_mouse_pos: None,
-            ctrl_held: false,
-            meta_held: false,
-        }
+fn modifier_held(
+    modifiers: &[bool; 4],
+    modifier: &rdev::Key,
+) -> bool {
+    // [ctrl, meta, shift, alt]
+    match modifier {
+        rdev::Key::ControlLeft | rdev::Key::ControlRight => modifiers[0],
+        rdev::Key::MetaLeft | rdev::Key::MetaRight => modifiers[1],
+        rdev::Key::ShiftLeft | rdev::Key::ShiftRight => modifiers[2],
+        rdev::Key::Alt | rdev::Key::AltGr => modifiers[3],
+        _ => false,
     }
 }
 
+fn all_required_held(rule: &Rule, modifiers: &[bool; 4]) -> bool {
+    rule.required_modifiers
+        .iter()
+        .all(|m| modifier_held(modifiers, m))
+}
+
 fn is_modifier_key(key: &rdev::Key) -> bool {
-    matches!(key, rdev::Key::ControlLeft | rdev::Key::ControlRight | rdev::Key::MetaLeft | rdev::Key::MetaRight)
+    matches!(
+        key,
+        rdev::Key::ControlLeft
+            | rdev::Key::ControlRight
+            | rdev::Key::MetaLeft
+            | rdev::Key::MetaRight
+            | rdev::Key::ShiftLeft
+            | rdev::Key::ShiftRight
+            | rdev::Key::Alt
+            | rdev::Key::AltGr
+    )
+}
+
+fn parse_arg(arg: &str, default_tag: &str) -> (String, Vec<rdev::Key>, Vec<rdev::Key>) {
+    let (tag, spec) = match arg.find('=') {
+        Some(pos) => (&arg[..pos], &arg[pos + 1..]),
+        None => (default_tag, arg),
+    };
+
+    let (mod_part, key_part) = match spec.find(':') {
+        Some(pos) => (&spec[..pos], &spec[pos + 1..]),
+        None => ("", spec),
+    };
+
+    let required_modifiers: Vec<rdev::Key> = mod_part
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| match s.trim().to_lowercase().as_str() {
+            "ctrl" | "control" => Some(vec![rdev::Key::ControlLeft]),
+            "meta" | "command" => Some(vec![rdev::Key::MetaLeft]),
+            "shift" => Some(vec![rdev::Key::ShiftLeft]),
+            "alt" => Some(vec![rdev::Key::Alt]),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
+    let key_sequence: Vec<rdev::Key> = key_part
+        .split(',')
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| parse_key(s.trim()))
+        .collect();
+
+    (tag.to_string(), required_modifiers, key_sequence)
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    // 参数格式: "C,D" 或 "C,C"（按键序列，逗号分隔）
-    let seq_arg = if args.len() > 1 {
-        args[1].clone()
+    let specs: Vec<String> = if args.len() > 1 {
+        args[1..].to_vec()
     } else {
-        "C".to_string()
+        vec!["meta:C".to_string()]
     };
 
-    let key_sequence: Vec<rdev::Key> = seq_arg
-        .split(',')
-        .filter_map(|s| parse_key(s.trim()))
-        .collect();
+    let mut rules: Vec<Rule> = Vec::new();
+    for (i, spec) in specs.iter().enumerate() {
+        let (tag, required_modifiers, key_sequence) = parse_arg(spec, &format!("RULE{}", i));
+        if key_sequence.is_empty() {
+            eprintln!("[hook] 无效的按键序列: {}", spec);
+            continue;
+        }
+        rules.push(Rule {
+            tag,
+            required_modifiers,
+            key_sequence,
+            match_index: 0,
+            last_press: Instant::now() - SEQ_WINDOW,
+        });
+    }
 
-    if key_sequence.is_empty() {
-        eprintln!("[hook] 无效的按键序列: {}", seq_arg);
+    if rules.is_empty() {
+        eprintln!("[hook] 没有有效的按键规则");
         std::process::exit(1);
     }
 
-    let mut state = State {
-        key_sequence,
-        ..State::default()
-    };
+    // [ctrl, meta, shift, alt]
+    let mut modifiers = [false; 4];
+    let mut pressed_keys: HashSet<rdev::Key> = HashSet::new();
+    let mut last_mouse_pos: Option<(f64, f64)> = None;
+
     let mut stdout = io::stdout();
 
-    eprintln!(
-        "[hook] keyboard-hook started, sequence={:?}",
-        state.key_sequence
-    );
+    // 启动时静默，不向 stderr 输出日志（避免被误当作翻译文本）
+    // eprintln!(
+    //     "[hook] keyboard-hook started, rules={:?}",
+    //     rules
+    //         .iter()
+    //         .map(|r| format!("{}:{:?}", r.tag, r.key_sequence))
+    //         .collect::<Vec<_>>()
+    // );
 
     if let Err(e) = rdev::listen(move |event| match event.event_type {
         rdev::EventType::KeyPress(key) => {
             if is_modifier_key(&key) {
                 match key {
-                    rdev::Key::ControlLeft | rdev::Key::ControlRight => state.ctrl_held = true,
-                    rdev::Key::MetaLeft | rdev::Key::MetaRight => state.meta_held = true,
+                    rdev::Key::ControlLeft | rdev::Key::ControlRight => modifiers[0] = true,
+                    rdev::Key::MetaLeft | rdev::Key::MetaRight => modifiers[1] = true,
+                    rdev::Key::ShiftLeft | rdev::Key::ShiftRight => modifiers[2] = true,
+                    rdev::Key::Alt | rdev::Key::AltGr => modifiers[3] = true,
                     _ => {}
                 }
                 return;
             }
 
-            // 非修饰键按下：必须是序列中的下一个键，且修饰键处于按下状态
-            if !(state.ctrl_held || state.meta_held) {
-                // 未持修饰键时按普通键，重置匹配
-                state.match_index = 0;
+            if pressed_keys.contains(&key) {
                 return;
             }
+            pressed_keys.insert(key);
 
-            let expected = &state.key_sequence[state.match_index];
-            if key == *expected {
-                let now = Instant::now();
-                let gap = now.duration_since(state.last_press);
+            let now = Instant::now();
 
-                state.match_index += 1;
-                state.last_press = now;
-
-                // 窗口超界：重置
-                if gap > SEQ_WINDOW {
-                    state.match_index = 0;
+            for rule in rules.iter_mut() {
+                if !all_required_held(rule, &modifiers) {
+                    rule.match_index = 0;
+                    continue;
                 }
 
-                // 序列完整匹配
-                if state.match_index >= state.key_sequence.len() {
-                    state.match_index = 0;
-                    eprintln!("[hook] >>> SENDING TRANSLATE");
-                    let (x, y) = state.last_mouse_pos.unwrap_or((0.0, 0.0));
-                    let _ = writeln!(stdout, "TRANSLATE {} {}", x, y);
-                    let _ = stdout.flush();
+                if rule.match_index >= 1 {
+                    let gap = now.duration_since(rule.last_press);
+                    if gap > SEQ_WINDOW {
+                        rule.match_index = 0;
+                    }
                 }
-            } else {
-                // 按了非预期键，重置匹配
-                state.match_index = 0;
+
+                let expected = &rule.key_sequence[rule.match_index];
+
+                if key == *expected {
+                    rule.last_press = now;
+                    rule.match_index += 1;
+
+                    if rule.match_index >= rule.key_sequence.len() {
+                        rule.match_index = 0;
+                        eprintln!("[hook] >>> SENDING {}", rule.tag);
+                        let (x, y) = last_mouse_pos.unwrap_or((0.0, 0.0));
+                        let _ = writeln!(stdout, "{} {} {}", rule.tag, x, y);
+                        let _ = stdout.flush();
+                    }
+                } else {
+                    rule.match_index = 0;
+                }
             }
         }
         rdev::EventType::KeyRelease(key) => {
             if is_modifier_key(&key) {
                 match key {
-                    rdev::Key::ControlLeft | rdev::Key::ControlRight => state.ctrl_held = false,
-                    rdev::Key::MetaLeft | rdev::Key::MetaRight => state.meta_held = false,
+                    rdev::Key::ControlLeft | rdev::Key::ControlRight => modifiers[0] = false,
+                    rdev::Key::MetaLeft | rdev::Key::MetaRight => modifiers[1] = false,
+                    rdev::Key::ShiftLeft | rdev::Key::ShiftRight => modifiers[2] = false,
+                    rdev::Key::Alt | rdev::Key::AltGr => modifiers[3] = false,
                     _ => {}
                 }
-                // 修饰键抬起时重置匹配（按下字母键时功能键必须处于按下状态）
-                state.match_index = 0;
+            } else {
+                pressed_keys.remove(&key);
             }
         }
         rdev::EventType::MouseMove { x, y } => {
-            state.last_mouse_pos = Some((x, y));
+            last_mouse_pos = Some((x, y));
         }
         _ => {}
     }) {

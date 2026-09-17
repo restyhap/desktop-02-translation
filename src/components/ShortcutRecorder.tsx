@@ -126,11 +126,6 @@ export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorder
       keysRef.current.push(normalized);
       lastKeyTimeRef.current = now;
       setPressedKeys([...keysRef.current]);
-
-      const normalKeyCount = keysRef.current.filter((k) => !MODIFIER_KEYS.has(k)).length;
-      if (normalKeyCount >= 2) {
-        setTimeout(() => commit([...keysRef.current]), 300);
-      }
     },
     [recording, value, onChange, commit, stopRecording]
   );

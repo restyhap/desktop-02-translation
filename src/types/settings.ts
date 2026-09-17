@@ -62,7 +62,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   shortcuts: {
     translate: "⌘+C+C",
-    show_main: "Ctrl+Shift+T",
+    show_main: "⌘+C+V",
   },
   llm: {
     endpoint: "",

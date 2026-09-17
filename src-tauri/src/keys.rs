@@ -181,6 +181,20 @@ impl KeyManager {
         Ok(records)
     }
 
+    pub fn reorder_keys(app: &tauri::AppHandle, ordered: &[String]) -> Result<(), String> {
+        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
+        Self::ensure_schema(&conn)?;
+        for (i, service) in ordered.iter().enumerate() {
+            let mut stmt = conn
+                .prepare("UPDATE api_keys SET sort = ? WHERE service_name = ?")
+                .map_err(|e| e.to_string())?;
+            stmt.bind((1, i as i64)).map_err(|e| e.to_string())?;
+            stmt.bind((2, service.as_str())).map_err(|e| e.to_string())?;
+            stmt.next().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn delete_key(app: &tauri::AppHandle, service: &str) -> Result<(), String> {
         let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| e.to_string())?;
         Self::ensure_schema(&conn)?;

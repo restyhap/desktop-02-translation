@@ -89,6 +89,22 @@ impl Database {
             tables_created.push("app_settings".to_string());
         }
 
+        // 创建词典路径设置表
+        if conn.execute("CREATE TABLE IF NOT EXISTS dict_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)").is_ok() {
+            tables_created.push("dict_settings".to_string());
+        }
+
+        // 创建翻译引擎表
+        if conn.execute("CREATE TABLE IF NOT EXISTS translation_engines (
+            service_name TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            requires_app_id INTEGER NOT NULL DEFAULT 0,
+            requires_api_key INTEGER NOT NULL DEFAULT 1
+        )").is_ok() {
+            tables_created.push("translation_engines".to_string());
+        }
+
         // 创建索引
         let _ = conn
             .execute("CREATE INDEX IF NOT EXISTS idx_ts ON translation_history(timestamp DESC)");
@@ -138,5 +154,124 @@ impl Database {
             tables_created,
             schema_version: SCHEMA_VERSION,
         })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TranslationEngine {
+    pub service_name: String,
+    pub display_name: String,
+    pub url: String,
+    pub requires_app_id: bool,
+    pub requires_api_key: bool,
+}
+
+pub struct EngineManager;
+
+impl EngineManager {
+    pub fn init(app: &tauri::AppHandle) -> Result<(), String> {
+        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS translation_engines (
+                service_name TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                url TEXT NOT NULL,
+                requires_app_id INTEGER NOT NULL DEFAULT 0,
+                requires_api_key INTEGER NOT NULL DEFAULT 1
+            )",
+        ).map_err(|e| format!("创建翻译引擎表失败: {}", e))?;
+        // 预置常见引擎（仅插入不存在的）
+        let engines = [
+            ("google", "谷歌翻译", "https://translation.googleapis.com/language/translate/v2", false, true),
+            ("deepl", "DeepL", "https://api.deepl.com/v2/translate", false, true),
+            ("baidu", "百度翻译", "https://fanyi-api.baidu.com/api/trans/vip/translate", true, true),
+            ("youdao", "有道翻译", "https://openapi.youdao.com/api", true, true),
+            ("caiyun", "彩云小译", "https://api.caiyunapp.com/v1/translator", false, true),
+            ("ali", "阿里翻译", "https://mt.aliyuncs.com/", false, true),
+            ("volcano", "火山翻译", "https://translate-api.volcanoengine.com/", true, true),
+        ];
+        for (name, display, url, app_id, api_key) in &engines {
+            let _ = conn.execute(&format!(
+                "INSERT OR IGNORE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES ('{}', '{}', '{}', {}, {})",
+                name, display, url, if *app_id { 1 } else { 0 }, if *api_key { 1 } else { 0 }
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn list(app: &tauri::AppHandle) -> Result<Vec<TranslationEngine>, String> {
+        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        let mut stmt = conn
+            .prepare("SELECT service_name, display_name, url, requires_app_id, requires_api_key FROM translation_engines ORDER BY display_name")
+            .map_err(|e| format!("{}", e))?;
+        let mut engines = Vec::new();
+        loop {
+            match stmt.next() {
+                Ok(sqlite::State::Row) => {
+                    engines.push(TranslationEngine {
+                        service_name: stmt.read(0).unwrap_or_default(),
+                        display_name: stmt.read(1).unwrap_or_default(),
+                        url: stmt.read(2).unwrap_or_default(),
+                        requires_app_id: stmt.read::<i64, _>(3).unwrap_or(0) != 0,
+                        requires_api_key: stmt.read::<i64, _>(4).unwrap_or(1) != 0,
+                    });
+                }
+                Ok(sqlite::State::Done) => break,
+                Err(_) => break,
+            }
+        }
+        Ok(engines)
+    }
+
+    pub fn add(app: &tauri::AppHandle, service_name: &str, display_name: &str, url: &str, requires_app_id: bool, requires_api_key: bool) -> Result<(), String> {
+        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        conn.execute(&format!(
+            "INSERT OR REPLACE INTO translation_engines (service_name, display_name, url, requires_app_id, requires_api_key) VALUES ('{}', '{}', '{}', {}, {})",
+            service_name, display_name, url, if requires_app_id { 1 } else { 0 }, if requires_api_key { 1 } else { 0 }
+        )).map_err(|e| format!("添加翻译引擎失败: {}", e))?;
+        Ok(())
+    }
+
+    pub fn delete(app: &tauri::AppHandle, service_name: &str) -> Result<(), String> {
+        let conn = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        conn.execute(&format!("DELETE FROM translation_engines WHERE service_name = '{}'", service_name))
+            .map_err(|e| format!("删除翻译引擎失败: {}", e))?;
+        Ok(())
+    }
+}
+
+pub struct DictPaths;
+
+impl DictPaths {
+    fn conn(app: &tauri::AppHandle) -> Result<sqlite::Connection, String> {
+        let c = sqlite::open(Database::get_db_path(app)).map_err(|e| format!("{}", e))?;
+        c.execute("CREATE TABLE IF NOT EXISTS dict_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            .map_err(|e| format!("创建 dict_settings 表失败: {}", e))?;
+        Ok(c)
+    }
+
+    pub fn get(app: &tauri::AppHandle) -> Result<Vec<String>, String> {
+        let conn = Self::conn(app)?;
+        let mut stmt = conn
+            .prepare("SELECT value FROM dict_settings WHERE key = 'paths'")
+            .map_err(|e| format!("{}", e))?;
+        let mut result: Vec<String> = vec![];
+        while let Ok(sqlite::State::Row) = stmt.next() {
+            let raw: String = stmt.read(0).unwrap_or_default();
+            let parsed: Vec<String> = serde_json::from_str(&raw).unwrap_or_default();
+            result = parsed;
+        }
+        Ok(result)
+    }
+
+    pub fn set(app: &tauri::AppHandle, paths: &[String]) -> Result<(), String> {
+        let conn = Self::conn(app)?;
+        let json = serde_json::to_string(paths).map_err(|e| e.to_string())?;
+        conn.execute(&format!(
+            "INSERT OR REPLACE INTO dict_settings (key, value) VALUES ('paths', '{}')",
+            json.replace('\'', "''")
+        ))
+        .map_err(|e| format!("保存词典路径失败: {}", e))?;
+        Ok(())
     }
 }

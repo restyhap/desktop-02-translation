@@ -376,3 +376,149 @@ pub async fn translate_with_caiyun(
         engine: "caiyun".to_string(),
     })
 }
+
+// ==================== 阿里翻译 ====================
+
+use hmac::{Hmac, Mac};
+use sha1::Sha1;
+use base64::Engine;
+
+type HmacSha1 = Hmac<Sha1>;
+
+/// 调用阿里翻译 API（HTTP 网关 /api/translate/web/general，ROA 风格签名）
+pub async fn translate_with_alibaba(
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    access_key_secret: &str,
+    access_key_id: &str,
+) -> Result<TranslationResult, String> {
+    const ENDPOINT: &str = "http://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general";
+    const ACCEPT: &str = "application/json";
+    const CONTENT_TYPE: &str = "application/json;charset=utf-8";
+    const API_VERSION: &str = "2019-01-02";
+
+    let body = serde_json::json!({
+        "FormatType": "text",
+        "SourceLanguage": source_lang,
+        "TargetLanguage": target_lang,
+        "SourceText": text,
+        "Scene": "general",
+    })
+    .to_string();
+
+    // ROA 签名：Content-MD5 头 = Base64(MD5(body))
+    let mut hasher = Md5::new();
+    hasher.update(body.as_bytes());
+    let body_md5 = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
+    let date = chrono::Utc::now().format("%a, %d %b %Y %H:%M:%S GMT").to_string();
+    let nonce = uuid::Uuid::new_v4().to_string();
+
+    let string_to_sign = format!(
+        "POST\n{accept}\n{body_md5}\n{content_type}\n{date}\n\
+         x-acs-signature-method:HMAC-SHA1\n\
+         x-acs-signature-nonce:{nonce}\n\
+         x-acs-version:{api_version}\n\
+         /api/translate/web/general",
+        accept = ACCEPT,
+        body_md5 = body_md5,
+        content_type = CONTENT_TYPE,
+        date = date,
+        nonce = nonce,
+        api_version = API_VERSION,
+    );
+
+    let mut mac = HmacSha1::new_from_slice(access_key_secret.as_bytes())
+        .map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(string_to_sign.as_bytes());
+    let signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let authorization = format!("acs {}:{}", access_key_id, signature);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(ENDPOINT)
+        .header("Accept", ACCEPT)
+        .header("Content-Type", CONTENT_TYPE)
+        .header("Content-MD5", &body_md5)
+        .header("Date", &date)
+        .header("Host", "mt.cn-hangzhou.aliyuncs.com")
+        .header("Authorization", &authorization)
+        .header("x-acs-signature-nonce", &nonce)
+        .header("x-acs-signature-method", "HMAC-SHA1")
+        .header("x-acs-version", API_VERSION)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP 请求失败: {}", e))?;
+
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+
+    // HTTP 网关统一错误返回：{"errorCode":"...","errorMsg":"..."}
+    let error_msg = serde_json::from_str::<serde_json::Value>(&body_text)
+        .ok()
+        .and_then(|v| {
+            v.get("errorMsg")
+                .or_else(|| v.get("ErrorMsg"))
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| body_text.clone());
+
+    if !status.is_success() {
+        return Err(format!("阿里翻译 API 错误: {}", error_msg));
+    }
+
+#[derive(Debug, Deserialize)]
+struct AlibabaHttpResponse {
+    #[serde(rename = "Code", alias = "code")]
+    code: Option<String>,
+    #[serde(rename = "Message", alias = "message")]
+    message: Option<String>,
+    #[serde(rename = "Data", alias = "data")]
+    data: Option<AlibabaHttpData>,
+    #[serde(rename = "errorCode", alias = "ErrorCode")]
+    error_code: Option<String>,
+    #[serde(rename = "errorMsg", alias = "ErrorMsg")]
+    error_msg: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AlibabaHttpData {
+    #[serde(rename = "Translated", alias = "translated")]
+    translated: Option<String>,
+}
+
+    let result: AlibabaHttpResponse = serde_json::from_str(&body_text)
+        .map_err(|e| format!("解析响应失败: {} - 原始响应: {}", e, body_text))?;
+
+    if let Some(err_code) = result.error_code {
+        return Err(format!(
+            "阿里翻译错误: {} - {}",
+            err_code,
+            result.error_msg.unwrap_or_default()
+        ));
+    }
+
+    if let Some(code) = result.code {
+        if code != "200" {
+            return Err(format!(
+                "阿里翻译错误: {} - {}",
+                code,
+                result.message.unwrap_or_default()
+            ));
+        }
+    }
+
+    let translation_text = result
+        .data
+        .and_then(|d| d.translated)
+        .ok_or_else(|| format!("阿里翻译响应中未找到译文: {}", body_text))?;
+
+    Ok(TranslationResult {
+        text: translation_text,
+        source_lang: source_lang.to_string(),
+        target_lang: target_lang.to_string(),
+        engine: "ali".to_string(),
+    })
+}

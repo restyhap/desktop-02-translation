@@ -5,10 +5,11 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use tauri::{Emitter, LogicalPosition, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 
 mod db;
 mod keys;
+mod dict;
 mod translation;
 
 static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
@@ -25,7 +26,7 @@ impl Default for ShortcutConfig {
     fn default() -> Self {
         Self {
             translate: "⌘+C+C".into(),
-            show_main: "⌘+Shift+T".into(),
+            show_main: "⌘+C+V".into(),
         }
     }
 }
@@ -126,105 +127,26 @@ fn save_shortcuts(app: &tauri::AppHandle, config: &ShortcutConfig) {
     }
 }
 
-fn parse_shortcut(shortcut_str: &str) -> Result<Shortcut, String> {
-    let parts: Vec<&str> = shortcut_str.split('+').collect();
-    let mut modifiers = Modifiers::empty();
-    let mut code = None;
-
-    for part in &parts {
+fn extract_keys_from_shortcut(shortcut: &str) -> String {
+    let mut modifiers = Vec::new();
+    let mut keys = Vec::new();
+    for part in shortcut.split('+') {
         let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
         match part {
-            "Ctrl" | "Control" => modifiers |= Modifiers::CONTROL,
-            "⌘" | "Meta" | "Command" => modifiers |= Modifiers::SUPER,
-            "⇧" | "Shift" => modifiers |= Modifiers::SHIFT,
-            "⌥" | "Alt" => modifiers |= Modifiers::ALT,
-            key if !key.is_empty() && key.len() == 1 => {
-                code = Some(match key.to_uppercase().as_str() {
-                    "A" => Code::KeyA,
-                    "B" => Code::KeyB,
-                    "C" => Code::KeyC,
-                    "D" => Code::KeyD,
-                    "E" => Code::KeyE,
-                    "F" => Code::KeyF,
-                    "G" => Code::KeyG,
-                    "H" => Code::KeyH,
-                    "I" => Code::KeyI,
-                    "J" => Code::KeyJ,
-                    "K" => Code::KeyK,
-                    "L" => Code::KeyL,
-                    "M" => Code::KeyM,
-                    "N" => Code::KeyN,
-                    "O" => Code::KeyO,
-                    "P" => Code::KeyP,
-                    "Q" => Code::KeyQ,
-                    "R" => Code::KeyR,
-                    "S" => Code::KeyS,
-                    "T" => Code::KeyT,
-                    "U" => Code::KeyU,
-                    "V" => Code::KeyV,
-                    "W" => Code::KeyW,
-                    "X" => Code::KeyX,
-                    "Y" => Code::KeyY,
-                    "Z" => Code::KeyZ,
-                    "0" => Code::Digit0,
-                    "1" => Code::Digit1,
-                    "2" => Code::Digit2,
-                    "3" => Code::Digit3,
-                    "4" => Code::Digit4,
-                    "5" => Code::Digit5,
-                    "6" => Code::Digit6,
-                    "7" => Code::Digit7,
-                    "8" => Code::Digit8,
-                    "9" => Code::Digit9,
-                    _ => return Err(format!("Unsupported key: {}", key)),
-                });
-            }
-            _ => {}
+            "Ctrl" | "Control" => modifiers.push("ctrl"),
+            "⌘" | "Meta" | "Command" => modifiers.push("meta"),
+            "⇧" | "Shift" => modifiers.push("shift"),
+            "⌥" | "Alt" => modifiers.push("alt"),
+            _ => keys.push(part.to_uppercase()),
         }
     }
-
-    let code = code.ok_or("No key specified")?;
-    Ok(Shortcut::new(Some(modifiers), code))
-}
-
-fn extract_keys_from_shortcut(shortcut: &str) -> String {
-    let modifier_names = ["Ctrl", "⌘", "⇧", "⌥", "Command", "Control", "Shift", "Alt", "Meta"];
-    let keys: Vec<String> = shortcut
-        .split('+')
-        .map(|part| part.trim().to_string())
-        .filter(|key| !key.is_empty() && !modifier_names.contains(&key.as_str()))
-        .collect();
     if keys.is_empty() {
-        "C".to_string()
-    } else {
-        keys.join(",")
+        keys.push("C".to_string());
     }
-}
-
-fn register_shortcuts(app: &tauri::AppHandle) -> Result<(), String> {
-    let shortcuts = app.state::<Mutex<ShortcutConfig>>();
-    let config = shortcuts.lock().unwrap().clone();
-
-    let gs = app.global_shortcut();
-    gs.unregister_all().map_err(|e| e.to_string())?;
-
-    if !config.show_main.is_empty() {
-        let show_main = parse_shortcut(&config.show_main)
-            .map_err(|e| format!("显示主窗口快捷键解析失败: {}", e))?;
-        let _ = gs.on_shortcut(show_main, move |app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
-                }
-            }
-        });
-        println!("✓ 显示主窗口快捷键: {}", config.show_main);
-    } else {
-        println!("ℹ 显示主窗口快捷键未设置，跳过注册");
-    }
-
-    Ok(())
+    format!("{}:{}", modifiers.join(","), keys.join(","))
 }
 
 fn spawn_keyboard_hook(app: tauri::AppHandle) {
@@ -238,15 +160,21 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
     let shortcuts = app.state::<Mutex<ShortcutConfig>>();
     let config = shortcuts.lock().unwrap().clone();
 
-    if config.translate.is_empty() {
-        println!("ℹ 翻译快捷键未设置，不启动 keyboard-hook");
+    let mut args = Vec::new();
+    if !config.translate.is_empty() {
+        args.push(format!("TRANSLATE={}", extract_keys_from_shortcut(&config.translate)));
+    }
+    if !config.show_main.is_empty() {
+        args.push(format!("SHOW_MAIN={}", extract_keys_from_shortcut(&config.show_main)));
+    }
+
+    if args.is_empty() {
+        println!("ℹ 未设置快捷键，不启动 keyboard-hook");
         return;
     }
 
-    let key_arg = extract_keys_from_shortcut(&config.translate);
-
     let mut cmd = Command::new(&hook_bin);
-    cmd.arg(&key_arg)
+    cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -288,8 +216,12 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                eprintln!("[main] received line: '{}'", line);
-                if line.trim() == "TRANSLATE" || line.trim().starts_with("TRANSLATE ") {
+                let trimmed = line.trim();
+                // 严格过滤：只处理以 TRANSLATE 或 SHOW_MAIN 开头的事件行，跳过所有启动/调试日志
+                if !trimmed.starts_with("TRANSLATE") && !trimmed.starts_with("SHOW_MAIN") {
+                    continue;
+                }
+                if trimmed == "TRANSLATE" || trimmed.starts_with("TRANSLATE ") {
                     let text = match app.clipboard().read_text() {
                         Ok(t) => t.trim().to_string(),
                         Err(e) => {
@@ -297,10 +229,10 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                             String::new()
                         }
                     };
-                    let (cursor_x, cursor_y) = if line.trim() == "TRANSLATE" {
+                    let (cursor_x, cursor_y) = if trimmed == "TRANSLATE" {
                         (0.0, 0.0)
                     } else {
-                        let parts: Vec<&str> = line.trim().splitn(3, ' ').collect();
+                        let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
                         if parts.len() >= 3 {
                             (
                                 parts[1].trim().parse::<f64>().unwrap_or(0.0),
@@ -316,6 +248,10 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                     } else {
                         text.clone()
                     };
+                    if display_text.trim().is_empty() {
+                        eprintln!("[main] 剪切板为空且无历史记录，跳过翻译");
+                        continue;
+                    }
                     eprintln!("[main] display_text len={}", display_text.len());
                     if !text.trim().is_empty() {
                         let mut last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
@@ -363,6 +299,12 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
                             serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
                         );
                     }
+                } else if trimmed == "SHOW_MAIN" || trimmed.starts_with("SHOW_MAIN ") {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.unminimize();
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
             }
         });
@@ -376,13 +318,21 @@ fn spawn_keyboard_hook(app: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(
             tauri_plugin_window_state::Builder::default()
                 .with_denylist(&["translate"])
                 .build(),
         )
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
@@ -392,8 +342,10 @@ pub fn run() {
             let initial_shortcuts = load_shortcuts(app.handle());
             app.manage(Mutex::new(initial_shortcuts));
 
-            register_shortcuts(app.handle()).ok();
             spawn_keyboard_hook(app.handle().clone());
+
+            // 初始化翻译引擎表
+            db::EngineManager::init(app.handle()).ok();
 
             let initial_general = load_general_config(app.handle());
             app.manage(Mutex::new(initial_general.clone()));
@@ -458,6 +410,11 @@ pub fn run() {
                 .build()?;
 
             TrayIconBuilder::new()
+                .icon(
+                    tauri::image::Image::from_bytes(include_bytes!("../icons/tray-icon.png"))
+                        .expect("failed to load tray icon"),
+                )
+                .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(move |app, event| match event.id.as_ref() {
                     "toggle" => {
@@ -473,8 +430,19 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            Ok(())
-        })
+    #[cfg(desktop)]
+    let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
+
+    #[cfg(desktop)]
+    {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            check_update_auto(handle).await;
+        });
+    }
+
+    Ok(())
+})
         .invoke_handler(tauri::generate_handler![
             close_translate_window,
             show_main_window,
@@ -483,12 +451,17 @@ pub fn run() {
             get_close_behavior_cmd,
             update_close_behavior_cmd,
             init_database_cmd,
-            get_db_status_cmd,
-            add_api_key_cmd,
-            get_api_key_cmd,
-            list_api_keys_cmd,
-            delete_api_key_cmd,
-            translate_cmd,
+             get_db_status_cmd,
+             get_engines_cmd,
+             add_engine_cmd,
+             delete_engine_cmd,
+             add_api_key_cmd,
+         get_api_key_cmd,
+             list_api_keys_cmd,
+             delete_api_key_cmd,
+             reorder_api_keys_cmd,
+             translate_cmd,
+             check_update,
             get_all_settings_cmd,
             save_all_settings_cmd,
             translate_history_cmd,
@@ -501,6 +474,18 @@ pub fn run() {
             delete_vocabulary_group_cmd,
             add_vocabulary_word_cmd,
             delete_vocabulary_word_cmd,
+    dict_init_cmd,
+    dict_build_cmd,
+    dict_search_cmd,
+    dict_suggest_cmd,
+    dict_lookup_cmd,
+    dict_load_resource_cmd,
+    dict_get_resource_cmd,
+    dict_has_db_cmd,
+    dict_word_count_cmd,
+    dict_list_cmd,
+    get_dict_paths_cmd,
+    save_dict_paths_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -537,10 +522,6 @@ fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Result
     {
         let state = app.state::<Mutex<ShortcutConfig>>();
         *state.lock().unwrap() = config.clone();
-    }
-
-    if let Err(e) = register_shortcuts(&app) {
-        eprintln!("[shortcuts] 注册显示主窗口快捷键失败（不影响翻译快捷键）: {}", e);
     }
 
     {
@@ -583,6 +564,21 @@ fn get_db_status_cmd(app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+fn get_engines_cmd(app: tauri::AppHandle) -> Result<Vec<db::TranslationEngine>, String> {
+    db::EngineManager::list(&app)
+}
+
+#[tauri::command]
+fn add_engine_cmd(app: tauri::AppHandle, service_name: String, display_name: String, url: String, requires_app_id: bool, requires_api_key: bool) -> Result<(), String> {
+    db::EngineManager::add(&app, &service_name, &display_name, &url, requires_app_id, requires_api_key)
+}
+
+#[tauri::command]
+fn delete_engine_cmd(app: tauri::AppHandle, service_name: String) -> Result<(), String> {
+    db::EngineManager::delete(&app, &service_name)
+}
+
+#[tauri::command]
 fn add_api_key_cmd(
     app: tauri::AppHandle,
     service: String,
@@ -616,6 +612,11 @@ fn list_api_keys_cmd(app: tauri::AppHandle) -> Result<Vec<keys::ApiKeyRecord>, S
 #[tauri::command]
 fn delete_api_key_cmd(app: tauri::AppHandle, service: String) -> Result<(), String> {
     keys::KeyManager::delete_key(&app, &service)
+}
+
+#[tauri::command]
+fn reorder_api_keys_cmd(app: tauri::AppHandle, ordered: Vec<String>) -> Result<(), String> {
+    keys::KeyManager::reorder_keys(&app, &ordered)
 }
 
 fn find_cached_translation(
@@ -691,6 +692,9 @@ async fn translate_cmd(
         }
         "caiyun" => {
             translation::translate_with_caiyun(&text, &source_lang, &target_lang, &api_key).await
+        }
+        "ali" => {
+            translation::translate_with_alibaba(&text, &source_lang, &target_lang, &api_key, &app_id).await
         }
         _ => return Err(format!("不支持的翻译引擎: {}", engine)),
     }?;
@@ -832,6 +836,45 @@ fn save_all_settings_cmd(app: tauri::AppHandle, settings: serde_json::Value) -> 
     }
 
     Ok(())
+}
+
+// ==================== 更新检查 ====================
+
+async fn check_update_auto(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+    match app.updater() {
+        Ok(updater) => {
+            match updater.check().await {
+                Ok(Some(update)) => {
+                    println!("[updater] 发现新版本: {}", update.version);
+                }
+                Ok(None) => {
+                    println!("[updater] 已是最新版本");
+                }
+                Err(e) => {
+                    println!("[updater] 检查失败: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            println!("[updater] 初始化失败: {}", e);
+        }
+    }
+}
+
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<String, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    match updater.check().await.map_err(|e| e.to_string())? {
+        Some(update) => {
+            update
+                .download_and_install(|_, _| {}, || {})
+                .await
+                .map_err(|e| e.to_string())?;
+            app.restart()
+        }
+        None => Ok("已是最新版本".into()),
+    }
 }
 
 // ==================== Legacy 兼容 ====================
@@ -1091,4 +1134,72 @@ fn get_vocabulary_words_cmd(app: tauri::AppHandle) -> Result<Vec<VocabularyWordR
         }
     }
     Ok(records)
+}
+
+// ==================== 词典查找 ====================
+
+#[tauri::command]
+fn dict_init_cmd(app: tauri::AppHandle) -> Result<bool, String> {
+    dict::Dictionary::init(&app)
+}
+
+#[tauri::command]
+async fn dict_build_cmd(app: tauri::AppHandle) -> Result<String, String> {
+    Ok(tokio::task::spawn_blocking(move || {
+        dict::Dictionary::build(&app)
+    }).await.map_err(|e| format!("构建任务失败: {}", e))??)
+}
+
+#[tauri::command]
+fn dict_search_cmd(app: tauri::AppHandle, query: String) -> Result<dict::DictSearchResult, String> {
+    dict::Dictionary::search(&app, query)
+}
+
+#[tauri::command]
+fn dict_suggest_cmd(app: tauri::AppHandle, query: String, dictionary_id: Option<i64>) -> Result<dict::DictSuggestResult, String> {
+    dict::Dictionary::suggest(&app, query, dictionary_id)
+}
+
+#[tauri::command]
+fn dict_lookup_cmd(app: tauri::AppHandle, word: String, dictionary_id: Option<i64>) -> Result<dict::DictLookupResult, String> {
+    dict::Dictionary::lookup(&app, word, dictionary_id)
+}
+
+#[tauri::command]
+fn dict_load_resource_cmd(app: tauri::AppHandle, word: String) -> Result<Vec<dict::DictResource>, String> {
+    dict::Dictionary::get_resources(&app, word)
+}
+
+#[tauri::command]
+fn dict_get_resource_cmd(
+    app: tauri::AppHandle,
+    zip_file: String,
+    filename: String,
+) -> Result<dict::DictResourceData, String> {
+    dict::Dictionary::get_resource_data(&app, zip_file, filename)
+}
+
+#[tauri::command]
+fn dict_has_db_cmd(app: tauri::AppHandle) -> bool {
+    dict::Dictionary::has_db(&app)
+}
+
+#[tauri::command]
+fn dict_word_count_cmd(app: tauri::AppHandle) -> Result<i64, String> {
+    dict::Dictionary::get_word_count(&app)
+}
+
+#[tauri::command]
+fn dict_list_cmd(app: tauri::AppHandle) -> Result<dict::DictListResult, String> {
+    dict::Dictionary::list(&app)
+}
+
+#[tauri::command]
+fn get_dict_paths_cmd(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    db::DictPaths::get(&app)
+}
+
+#[tauri::command]
+fn save_dict_paths_cmd(app: tauri::AppHandle, paths: Vec<String>) -> Result<(), String> {
+    db::DictPaths::set(&app, &paths)
 }

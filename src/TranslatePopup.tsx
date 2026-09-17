@@ -13,6 +13,7 @@ type ResizeDirection =
   | "West";
 import { translate } from "@/storage/translation";
 import { listApiKeys, saveTranslationHistory, store } from "@/storage";
+import { TTSButton } from "@/components/TTSButton";
 import type { TranslationResult, TranslationRecord, Language } from "@/types/translation";
 
 interface ApiKeyInfo {
@@ -272,7 +273,10 @@ function TranslatePopup() {
         <div className="flex-1 p-4 overflow-y-auto min-h-0">
           {loading ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-sm text-muted-foreground">翻译中...</div>
+              <div className="flex flex-col items-center gap-2">
+                <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
+                <div className="text-sm text-muted-foreground">翻译中...</div>
+              </div>
             </div>
           ) : error ? (
             <div className="flex items-center justify-center h-full">
@@ -282,10 +286,13 @@ function TranslatePopup() {
               </div>
             </div>
           ) : result ? (
-            <div>
+            <div className="relative">
               <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
               <div className="text-sm font-medium leading-relaxed text-primary">
                 {result.translatedText}
+              </div>
+              <div className="absolute bottom-2 right-2">
+                <TTSButton text={result.translatedText} lang={result.targetLang} />
               </div>
             </div>
           ) : (

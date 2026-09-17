@@ -6,6 +6,14 @@ export type Language = "zh" | "en" | "ja" | "ko" | "fr" | "de" | "es" | "ru";
  */
 export type TranslationEngine = string;
 
+export interface EngineInfo {
+  service_name: string;
+  display_name: string;
+  url: string;
+  requires_app_id: boolean;
+  requires_api_key: boolean;
+}
+
 /** api_keys 表记录（与 Rust 端 ApiKeyRecord 对齐） */
 export interface ApiKeyRecord {
   service_name: string;

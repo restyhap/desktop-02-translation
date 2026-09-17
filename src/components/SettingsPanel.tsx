@@ -1,10 +1,48 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
+import { useSortable } from "@dnd-kit/react/sortable";
+import { arrayMove } from "@dnd-kit/helpers";
+import { Modifier } from "@dnd-kit/abstract";
+import type { DragOperation } from "@dnd-kit/abstract";
+import type { Draggable as DomDraggable, Droppable as DomDroppable } from "@dnd-kit/dom";
+import { restrictShapeToBoundingRectangle } from "@dnd-kit/abstract/modifiers";
 import { useToast } from "@/components/ui/Toast";
+import { UpdateButton } from "@/components/UpdateButton";
 import type { AppSettings } from "@/types/settings";
 import type { ShortcutConfig } from "@/types/shortcuts";
-import { SUPPORTED_LANGUAGES, ApiKeyRecord } from "@/types/translation";
+import { SUPPORTED_LANGUAGES, ApiKeyRecord, EngineInfo } from "@/types/translation";
 import { ShortcutRecorder } from "./ShortcutRecorder";
+
+interface SettingsPanelProps {
+  onClose?: () => void;
+}
+
+const DEFAULT_ENGINES: EngineInfo[] = [
+  { service_name: "google", display_name: "谷歌翻译", url: "https://translation.googleapis.com/language/translate/v2", requires_app_id: false, requires_api_key: true },
+  { service_name: "deepl", display_name: "DeepL", url: "https://api.deepl.com/v2/translate", requires_app_id: false, requires_api_key: true },
+  { service_name: "baidu", display_name: "百度翻译", url: "https://fanyi-api.baidu.com/api/trans/vip/translate", requires_app_id: true, requires_api_key: true },
+  { service_name: "youdao", display_name: "有道翻译", url: "https://openapi.youdao.com/api", requires_app_id: true, requires_api_key: true },
+  { service_name: "caiyun", display_name: "彩云小译", url: "https://api.caiyunapp.com/v1/translator", requires_app_id: false, requires_api_key: true },
+  { service_name: "ali", display_name: "阿里翻译", url: "http://mt.cn-hangzhou.aliyuncs.com/api/translate/web/general", requires_app_id: true, requires_api_key: true },
+  { service_name: "volcano", display_name: "火山翻译", url: "https://translate-api.volcanoengine.com/", requires_app_id: true, requires_api_key: true },
+];
+
+// 限制拖拽位移不超出卡片父容器（翻译服务列表）
+// 用 shape.initial（拖拽起始矩形）作边界基准，避免与 Feedback 的增量 shape 更新叠加导致位移翻倍
+class RestrictToParentElement extends Modifier {
+  apply(operation: DragOperation<DomDraggable, DomDroppable>) {
+    const { transform, shape, source } = operation;
+    const initialShape = shape?.initial;
+    const parent = source?.element?.parentElement;
+    if (!initialShape || !parent) return transform;
+    return restrictShapeToBoundingRectangle(
+      initialShape,
+      transform,
+      parent.getBoundingClientRect(),
+    );
+  }
+}
 
 interface SettingsPanelProps {
   onClose?: () => void;
@@ -35,7 +73,6 @@ const navGroups: NavGroup[] = [
     items: [
       { id: "source-lang", label: "默认源语言", sectionId: "section-source-lang" },
       { id: "target-lang", label: "默认目标语言", sectionId: "section-target-lang" },
-      { id: "default-engine", label: "默认引擎", sectionId: "section-default-engine" },
       { id: "api-keys", label: "API Key", sectionId: "section-api-keys" },
       { id: "auto-detect", label: "自动检测", sectionId: "section-auto-detect" },
     ],
@@ -47,6 +84,12 @@ const navGroups: NavGroup[] = [
       { id: "font-size", label: "字体大小", sectionId: "section-font-size" },
       { id: "opacity", label: "不透明度", sectionId: "section-opacity" },
       { id: "hide-delay", label: "自动隐藏延迟", sectionId: "section-hide-delay" },
+    ],
+  },
+  {
+    title: "词典",
+    items: [
+      { id: "dict-paths", label: "词典目录", sectionId: "section-dict-paths" },
     ],
   },
   {
@@ -70,68 +113,86 @@ const DEFAULT_SETTINGS: AppSettings = {
 
 export function SettingsPanel({ onClose }: SettingsPanelProps) {
   const { showToast } = useToast();
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
-  const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
-  const [activeNavId, setActiveNavId] = useState<string>("launch");
-  const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
-  const [showAddModal, setShowAddModal] = useState(false);
+   const [settings, setSettings] = useState<AppSettings | null>(null);
+   const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
+   const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
+   const [activeNavId, setActiveNavId] = useState<string>("launch");
+   const [loadError, setLoadError] = useState<string | null>(null);
+ const [apiKeys, setApiKeys] = useState<ApiKeyRecord[]>([]);
+   const [engines, setEngines] = useState<EngineInfo[]>([]);
+  // ponytail: engines 现在只在刷新时用, 不再渲染到 JSX (默认引擎选择移到了 AddKeyModal)
+  void engines;
+ const [showAddModal, setShowAddModal] = useState(false);
+  const [dictPaths, setDictPaths] = useState<string[]>([]);
   const contentRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const apiKeysRef = useRef<ApiKeyRecord[]>([]);
+  apiKeysRef.current = apiKeys;
 
-  // 加载设置
-  useEffect(() => {
-    const loadSettings = async () => {
+    // 加载翻译引擎（用于添加服务时判断是否已存在同名服务）
+    const loadEngines = async () => {
       try {
-        const result = await invoke<any>("get_all_settings_cmd");
-        let loadedSettings: AppSettings = { ...DEFAULT_SETTINGS };
-        
-        if (result && typeof result === "object") {
-          const r = result as any;
-          if (r.general) loadedSettings.general = { ...DEFAULT_SETTINGS.general, ...r.general };
-          if (r.translation) loadedSettings.translation = { ...DEFAULT_SETTINGS.translation, ...r.translation };
-          if (r.appearance) loadedSettings.appearance = { ...DEFAULT_SETTINGS.appearance, ...r.appearance };
-          if (r.shortcuts) {
-            const sc = r.shortcuts;
-            loadedSettings.shortcuts = { ...DEFAULT_SETTINGS.shortcuts, translate: sc.translate, show_main: sc.show_main || (sc as unknown as Record<string, string>).showMain };
-          }
-          if (r.llm) loadedSettings.llm = { ...DEFAULT_SETTINGS.llm, ...r.llm };
-        }
-        
-        setSettings(loadedSettings);
-        setLoadError(null);
-      } catch (error) {
-        console.error("[Settings] 加载设置失败:", error);
-        setLoadError(error instanceof Error ? error.message : "加载失败");
-        setSettings(DEFAULT_SETTINGS);
-      }
-    };
-
-    const loadShortcuts = async () => {
-      try {
-        const config = await invoke<ShortcutConfig>("get_shortcuts_cmd");
-        setShortcuts(config);
-        setShortcutsLoaded(true);
+        const result = await invoke<EngineInfo[]>("get_engines_cmd");
+        setEngines(result);
       } catch {
-        setShortcutsLoaded(true);
+        setEngines(DEFAULT_ENGINES);
       }
     };
 
-    const loadApiKeys = async () => {
-      try {
-        const keys = await invoke<ApiKeyRecord[]>("list_api_keys_cmd");
-        setApiKeys(keys);
-      } catch (error) {
-        console.error("[Settings] 加载 API Key 失败:", error);
-      }
-    };
+    // ponytail: 同名服务检测在 handleAddApiKey 前做; engines state 保留供后续扩展
+    void engines;
 
-    loadSettings();
-    loadShortcuts();
-    loadApiKeys();
-  }, []);
+   useEffect(() => {
+     const loadSettings = async () => {
+       try {
+         const result = await invoke<any>("get_all_settings_cmd");
+         let loadedSettings: AppSettings = { ...DEFAULT_SETTINGS };
+         
+         if (result && typeof result === "object") {
+           const r = result as any;
+           if (r.general) loadedSettings.general = { ...DEFAULT_SETTINGS.general, ...r.general };
+           if (r.translation) loadedSettings.translation = { ...DEFAULT_SETTINGS.translation, ...r.translation };
+           if (r.appearance) loadedSettings.appearance = { ...DEFAULT_SETTINGS.appearance, ...r.appearance };
+           if (r.shortcuts) {
+             const sc = r.shortcuts;
+             loadedSettings.shortcuts = { ...DEFAULT_SETTINGS.shortcuts, translate: sc.translate, show_main: sc.showMain || (sc as unknown as Record<string, string>).showMain };
+           }
+           if (r.llm) loadedSettings.llm = { ...DEFAULT_SETTINGS.llm, ...r.llm };
+         }
+         
+         setSettings(loadedSettings);
+         setLoadError(null);
+       } catch (error) {
+         console.error("[Settings] 加载设置失败:", error);
+         setLoadError(error instanceof Error ? error.message : "加载失败");
+         setSettings(DEFAULT_SETTINGS);
+       }
+     };
+
+     const loadShortcuts = async () => {
+       try {
+         const config = await invoke<ShortcutConfig>("get_shortcuts_cmd");
+         setShortcuts(config);
+         setShortcutsLoaded(true);
+       } catch {
+         setShortcutsLoaded(true);
+       }
+     };
+
+      const loadApiKeys = async () => {
+        try {
+          const keys = await invoke<ApiKeyRecord[]>("list_api_keys_cmd");
+          setApiKeys(keys);
+        } catch (error) {
+          console.error("[Settings] 加载 API Key 失败:", error);
+        }
+      };
+
+      loadSettings();
+      loadShortcuts();
+      loadApiKeys();
+      loadEngines();
+    }, []);
 
   // 滚动监听
   useEffect(() => {
@@ -178,32 +239,20 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   }, []);
 
-  const updateSetting = (section: keyof AppSettings, key: string, value: any) => {
-    setSettings((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        [section]: { ...prev[section], [key]: value },
-      };
-    });
-  };
+const updateSetting = (section: keyof AppSettings, key: string, value: any) => {
+     setSettings((prev) => {
+       if (!prev) return prev;
+       const updated = {
+         ...prev,
+         [section]: { ...prev[section], [key]: value },
+       };
+       // 单项即保存
+       invoke("save_all_settings_cmd", { settings: updated }).catch(() => {});
+       return updated;
+     });
+   };
 
-  const handleSave = async () => {
-    if (!settings) return;
-    
-    setSaving(true);
-    try {
-      await invoke("save_all_settings_cmd", { settings });
-      showToast("设置已保存", "success");
-    } catch (error) {
-      console.error("[Settings] 保存失败:", error);
-      showToast("保存失败，请重试", "error");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const refreshApiKeys = async () => {
+   const refreshApiKeys = async () => {
     try {
       const keys = await invoke<ApiKeyRecord[]>("list_api_keys_cmd");
       setApiKeys(keys);
@@ -214,72 +263,166 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
     }
   };
 
-  const handleAddApiKey = async (name: string, appId: string, key: string, sort: number) => {
-    if (!name.trim() || !key.trim()) {
-      showToast("名称和密钥都是必填项", "error");
-      return;
-    }
-    // 将显示名称映射到标准引擎名
-    const engineMap: Record<string, string> = {
-      "google": "google", "谷歌": "google", "googel": "google",
-      "deepl": "deepl", "deep": "deepl",
-      "baidu": "baidu", "百度": "baidu", "百度翻译": "baidu",
-      "youdao": "youdao", "有道": "youdao", "有道翻译": "youdao",
-      "caiyun": "caiyun", "彩云": "caiyun", "彩云小译": "caiyun",
+ const handleAddApiKey = async (name: string, appId: string, key: string, url: string, sort: number, asDefault?: boolean) => {
+      if (!name.trim() || !key.trim()) {
+        showToast("名称和密钥都是必填项", "error");
+        return;
+      }
+      const serviceName = name.trim().toLowerCase().replace(/\s+/g, "_");
+      
+      try {
+        await invoke("add_api_key_cmd", {
+          service: serviceName,
+          display_name: name.trim(),
+          app_id: appId.trim() || null,
+          key: key.trim(),
+          sort,
+        });
+        // 同时添加到翻译引擎表
+        await invoke("add_engine_cmd", {
+          service_name: serviceName,
+          display_name: name.trim(),
+          url: url.trim(),
+          requires_app_id: !!appId.trim(),
+          requires_api_key: true,
+        });
+        if (asDefault && settings) {
+          const updated = { ...settings, translation: { ...settings.translation, defaultEngine: serviceName } };
+          await invoke("save_all_settings_cmd", { settings: updated });
+          setSettings(updated);
+        }
+        showToast("翻译服务添加成功", "success");
+       setShowAddModal(false);
+       await refreshApiKeys();
+       // 刷新引擎列表
+       try {
+         const result = await invoke<EngineInfo[]>("get_engines_cmd");
+         setEngines(result);
+       } catch {}
+     } catch (error) {
+       console.error("[Settings] 添加失败:", error);
+       showToast("添加失败，请重试", "error");
+     }
+   };
+
+    const handleDeleteApiKey = async (serviceName: string) => {
+      try {
+        await invoke("delete_api_key_cmd", { service: serviceName });
+        await invoke("delete_engine_cmd", { service_name: serviceName });
+        showToast("已删除", "success");
+        await refreshApiKeys();
+        try {
+          const result = await invoke<EngineInfo[]>("get_engines_cmd");
+          setEngines(result);
+        } catch {}
+      } catch (error) {
+        console.error("[Settings] 删除 API Key 失败:", error);
+        showToast("删除失败，请重试", "error");
+      }
     };
-    const standardEngine = engineMap[name.trim().toLowerCase()] || name.trim().toLowerCase();
-    
-    try {
-      await invoke("add_api_key_cmd", {
-        service: standardEngine,
-        display_name: name.trim(),
-        app_id: appId.trim() || null,
-        key: key.trim(),
-        sort,
-      });
-      showToast("API Key 添加成功", "success");
-      setShowAddModal(false);
-      await refreshApiKeys();
-    } catch (error) {
-      console.error("[Settings] 添加 API Key 失败:", error);
-      showToast("添加失败，请重试", "error");
-    }
-  };
 
-  const handleDeleteApiKey = async (serviceName: string) => {
-    try {
-      await invoke("delete_api_key_cmd", { service: serviceName });
-      showToast("已删除", "success");
-      await refreshApiKeys();
-    } catch (error) {
-      console.error("[Settings] 删除 API Key 失败:", error);
-      showToast("删除失败，请重试", "error");
-    }
-  };
+    const saveDictPaths = async (paths: string[]) => {
+      try {
+        await invoke("save_dict_paths_cmd", { paths });
+        setDictPaths(paths);
+        showToast("词典路径已保存", "success");
+      } catch (error) {
+        console.error("[Settings] 保存词典路径失败:", error);
+        showToast("保存词典路径失败", "error");
+      }
+    };
 
-  if (!settings) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <div className="text-center">
-          <div className="text-muted-foreground mb-2">加载中...</div>
-          {loadError && <div className="text-xs text-red-500 mt-2">{loadError}</div>}
+    const addDictPath = async () => {
+      try {
+        const { open } = await import("@tauri-apps/plugin-dialog");
+        const selected = await open({ directory: true, multiple: false });
+        if (typeof selected === "string") {
+          saveDictPaths([...dictPaths, selected]);
+        }
+      } catch (error) {
+        console.error("[Settings] 打开目录选择器失败:", error);
+        showToast("目录选择器不可用", "error");
+      }
+    };
+
+    const removeDictPath = (idx: number) => {
+      saveDictPaths(dictPaths.filter((_, i) => i !== idx));
+    };
+
+
+   if (!settings) {
+     return (
+       <div className="flex items-center justify-center h-full">
+         <div className="text-center">
+           <div className="text-muted-foreground mb-2">加载中...</div>
+           {loadError && <div className="text-xs text-red-500 mt-2">{loadError}</div>}
+         </div>
+</div>
+  );
+}
+
+function KeyItemCard({ item, onDelete }: {
+  item: ApiKeyRecord;
+  onDelete?: (serviceName: string) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between px-3 py-2.5 border rounded-md bg-background cursor-pointer active:cursor-grabbing">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium truncate">{item.display_name}</div>
+        <div className="text-xs text-muted-foreground mt-0.5 font-mono truncate">
+          ID: {item.app_id || "—"} · Key: {item.api_key ? "••••" + item.api_key.slice(-4) : "—"}
         </div>
       </div>
-    );
-  }
+      {onDelete && (
+        <button
+          onClick={() => onDelete(item.service_name)}
+          className="ml-2 px-2 py-1 text-xs border rounded hover:bg-destructive hover:text-white shrink-0"
+          title="删除此服务"
+        >
+          删除
+        </button>
+      )}
+    </div>
+  );
+}
+
+function SortableKeyItem({
+  item,
+  index,
+  onDelete,
+}: {
+  item: ApiKeyRecord;
+  index: number;
+  onDelete: (serviceName: string) => void;
+}) {
+  const { ref, isDragging } = useSortable({
+    id: item.service_name,
+    index,
+    transition: { duration: 300, easing: "cubic-bezier(0.65, 0, 0.35, 1)" },
+  });
 
   return (
-    <div className="flex flex-col h-full bg-card rounded-lg border overflow-hidden">
-      {/* 标题栏 - 固定高度 56px */}
-      <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
-        <h2 className="text-lg font-semibold">设置</h2>
-        <button
-          onClick={onClose}
-          className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-muted transition-colors"
-        >
-          ×
-        </button>
-      </div>
+    <div
+      ref={ref}
+      className={`${isDragging ? "opacity-60 ring-2 ring-primary/40" : ""} rounded-md`}
+    >
+      <KeyItemCard item={item} onDelete={onDelete} />
+    </div>
+  );
+}
+
+   return (
+     <div className="flex flex-col h-full bg-card rounded-lg border overflow-hidden">
+       {/* 标题栏 - 固定高度 56px */}
+       <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
+         <h2 className="text-lg font-semibold">设置</h2>
+         <button
+           onClick={onClose}
+           className="w-8 h-8 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-muted transition-colors"
+         >
+           ×
+         </button>
+       </div>
 
       <div className="flex flex-1 overflow-hidden">
         {/* 左侧导航 - 固定宽度 224px */}
@@ -315,14 +458,14 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
           <div className="w-full max-w-xl">
             
             {/* ========== 通用设置 ========== */}
-            <div className="mb-10">
-              <h3 className="text-base font-semibold mb-4 text-foreground">通用</h3>
+            <div className="mb-6">
+              <h3 className="text-base font-semibold mb-3 text-foreground">通用</h3>
               
               {/* 开机自启 */}
               <div 
                 id="section-general" 
                 ref={(el) => { sectionRefs.current["section-general"] = el; }}
-                className="flex items-center justify-between py-3 border-b border-border/50 last:border-0"
+                className="flex items-center justify-between py-2.5 border-b border-border/50 last:border-0"
               >
                 <div>
                   <div className="text-sm font-medium text-foreground">开机自启</div>
@@ -340,7 +483,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <div 
                 id="section-close-behavior" 
                 ref={(el) => { sectionRefs.current["section-close-behavior"] = el; }}
-                className="flex items-center justify-between py-3 border-b border-border/50"
+                className="flex items-center justify-between py-2.5 border-b border-border/50"
               >
                 <div>
                   <div className="text-sm font-medium text-foreground">关闭行为</div>
@@ -357,33 +500,36 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               </div>
 
               {/* 自动更新 */}
-              <div 
-                id="section-auto-update" 
-                ref={(el) => { sectionRefs.current["section-auto-update"] = el; }}
-                className="flex items-center justify-between py-3"
-              >
-                <div>
-                  <div className="text-sm font-medium text-foreground">自动更新</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">检查并安装更新</div>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={settings.general.checkUpdates}
-                  onChange={(e) => updateSetting("general", "checkUpdates", e.target.checked)}
-                  className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
-                />
-              </div>
-            </div>
+               <div 
+                 id="section-auto-update" 
+                 ref={(el) => { sectionRefs.current["section-auto-update"] = el; }}
+                 className="flex items-center justify-between py-3"
+               >
+                 <div>
+                   <div className="text-sm font-medium text-foreground">自动更新</div>
+                   <div className="text-xs text-muted-foreground mt-0.5">检查并安装更新</div>
+                 </div>
+                 <div className="flex items-center gap-3">
+                   <UpdateButton />
+                   <input
+                     type="checkbox"
+                     checked={settings.general.checkUpdates}
+                     onChange={(e) => updateSetting("general", "checkUpdates", e.target.checked)}
+                     className="h-4 w-4 rounded border-border text-primary focus:ring-primary"
+                   />
+                 </div>
+               </div>
+             </div>
 
             {/* ========== 翻译设置 ========== */}
-            <div className="mb-10">
-              <h3 className="text-base font-semibold mb-4 text-foreground">翻译</h3>
+            <div className="mb-6">
+              <h3 className="text-base font-semibold mb-3 text-foreground">翻译</h3>
               
               {/* 默认源语言 */}
               <div 
                 id="section-source-lang" 
                 ref={(el) => { sectionRefs.current["section-source-lang"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
                 <div className="text-sm font-medium text-foreground mb-2">默认源语言</div>
                 <select
@@ -401,7 +547,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <div 
                 id="section-target-lang" 
                 ref={(el) => { sectionRefs.current["section-target-lang"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
                 <div className="text-sm font-medium text-foreground mb-2">默认目标语言</div>
                 <select
@@ -415,38 +561,16 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 </select>
               </div>
 
-              {/* 默认翻译引擎 */}
-              <div 
-                id="section-default-engine" 
-                ref={(el) => { sectionRefs.current["section-default-engine"] = el; }}
-                className="py-3 border-b border-border/50"
-              >
-                <div className="text-sm font-medium text-foreground mb-2">默认翻译引擎</div>
-                <select
-                  value={settings.translation.defaultEngine}
-                  onChange={(e) => updateSetting("translation", "defaultEngine", e.target.value)}
-                  className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
-                >
-                  {apiKeys.length === 0 ? (
-                    <option value="">暂无已配置的翻译服务</option>
-                  ) : (
-                    apiKeys.map((item) => (
-                      <option key={item.service_name} value={item.service_name}>
-                        {item.display_name}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
+               {/* 默认引擎在「添加翻译服务」弹窗内选择（新建服务时可设为默认） */}
 
-              {/* API Key：数据库真实数据展示 */}
+               {/* API Key：数据库真实数据展示 */}
               <div 
                 id="section-api-keys" 
                 ref={(el) => { sectionRefs.current["section-api-keys"] = el; }}
-                className="py-4 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
-                <div className="flex items-center justify-between mb-4">
-                  <div className="text-sm font-medium text-foreground">翻译服务 API Key</div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="text-sm font-medium text-foreground">翻译服务 API Key ( 拖动改变标签显示顺序 )</div>
                   <button
                     onClick={() => setShowAddModal(true)}
                     className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90 shrink-0"
@@ -461,28 +585,41 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                     暂无已配置的翻译服务，点击「+ 添加」创建
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {apiKeys.map((item) => (
-                      <div key={item.service_name} className="flex items-center justify-between px-3 py-2.5 border rounded-md bg-background">
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium truncate">{item.display_name}</span>
-                            <span className="text-xs text-muted-foreground shrink-0">(排序 {item.sort})</span>
-                          </div>
-                          <div className="text-xs text-muted-foreground mt-0.5 font-mono truncate">
-                            ID: {item.app_id || "—"} · Key: {item.api_key ? "••••" + item.api_key.slice(-4) : "—"}
-                          </div>
-                        </div>
-                        <button
-                          onClick={() => handleDeleteApiKey(item.service_name)}
-                          className="ml-2 px-2 py-1 text-xs border rounded hover:bg-destructive hover:text-white shrink-0"
-                          title="删除此服务"
-                        >
-                          删除
-                        </button>
-                      </div>
-                    ))}
-                  </div>
+<DragDropProvider
+            modifiers={[RestrictToParentElement]}
+            onDragOver={(event) => {
+                      const { source, target } = event.operation;
+                      if (!source || !target || source.id === target.id) return;
+                      setApiKeys((prev) => {
+                        const from = prev.findIndex((k) => k.service_name === String(source.id));
+                        const to = prev.findIndex((k) => k.service_name === String(target.id));
+                        if (from < 0 || to < 0 || from === to) return prev;
+                        return arrayMove(prev, from, to);
+                      });
+                    }}
+                    onDragEnd={() => {
+                      invoke("reorder_api_keys_cmd", {
+                        ordered: apiKeysRef.current.map((k) => k.service_name),
+                      }).catch(() => showToast("保存排序失败", "error"));
+                    }}
+                  >
+                    <div className="space-y-2">
+                      {apiKeys.map((item, index) => (
+                        <SortableKeyItem
+                          key={item.service_name}
+                          item={item}
+                          index={index}
+                          onDelete={handleDeleteApiKey}
+                        />
+                      ))}
+                    </div>
+                    <DragOverlay>
+                      {(source) => {
+                        const item = apiKeys.find((k) => k.service_name === String(source.id));
+                        return item ? <KeyItemCard item={item} /> : null;
+                      }}
+                    </DragOverlay>
+                  </DragDropProvider>
                 )}
               </div>
 
@@ -505,15 +642,59 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               </div>
             </div>
 
-            {/* ========== 外观设置 ========== */}
-            <div className="mb-10">
-              <h3 className="text-base font-semibold mb-4 text-foreground">外观</h3>
+             {/* ========== 词典设置 ========== */}
+             <div className="mb-6">
+               <h3 className="text-base font-semibold mb-3 text-foreground">词典</h3>
+
+               <div
+                 id="section-dict-paths"
+                 ref={(el) => { sectionRefs.current["section-dict-paths"] = el; }}
+                 className="py-2.5 border-b border-border/50"
+               >
+                 <div className="text-sm font-medium text-foreground mb-2">词典目录</div>
+                 <div className="text-xs text-muted-foreground mb-3">GoldenDict DSL 目录（可添加多个，构建时逐个扫描）</div>
+
+                 <div className="space-y-2">
+                   {dictPaths.length === 0 ? (
+                     <div className="text-xs text-muted-foreground py-2 border border-dashed rounded-md text-center">
+                       暂无词典目录，下方添加
+                     </div>
+                   ) : (
+                     dictPaths.map((p, i) => (
+                       <div key={p} className="flex items-center justify-between px-3 py-2 border rounded-md bg-muted/30">
+                         <span className="text-xs font-mono truncate flex-1">{p}</span>
+                         <button
+                           onClick={() => removeDictPath(i)}
+                           className="ml-2 px-2 py-0.5 text-xs border rounded hover:bg-destructive hover:text-white shrink-0"
+                         >
+                           删除
+                         </button>
+                       </div>
+                     ))
+                   )}
+                 </div>
+
+                  <div className="mt-3">
+                    <button
+                      onClick={addDictPath}
+                      className="w-full px-3 py-2 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+                    >
+                      + 选择目录…
+                    </button>
+                    <div className="text-xs text-muted-foreground mt-1.5">点击选择本地 GoldenDict 目录，可重复添加</div>
+                  </div>
+               </div>
+             </div>
+
+             {/* ========== 外观设置 ========== */}
+            <div className="mb-6">
+              <h3 className="text-base font-semibold mb-3 text-foreground">外观</h3>
               
               {/* 主题 */}
               <div 
                 id="section-theme" 
                 ref={(el) => { sectionRefs.current["section-theme"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
                 <div className="text-sm font-medium text-foreground mb-2">主题</div>
                 <select
@@ -531,7 +712,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <div 
                 id="section-font-size" 
                 ref={(el) => { sectionRefs.current["section-font-size"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
                 <div className="text-sm font-medium text-foreground mb-2">字体大小</div>
                 <select
@@ -548,7 +729,7 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
               <div 
                 id="section-opacity" 
                 ref={(el) => { sectionRefs.current["section-opacity"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
                 <div className="text-sm font-medium text-foreground mb-2">不透明度: {settings.appearance.opacity}%</div>
                 <input
@@ -583,17 +764,17 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
             </div>
 
             {/* ========== 快捷键设置 ========== */}
-            <div className="mb-10">
-              <h3 className="text-base font-semibold mb-4 text-foreground">快捷键</h3>
+            <div className="mb-6">
+              <h3 className="text-base font-semibold mb-3 text-foreground">快捷键</h3>
               
               {/* 翻译快捷键 */}
               <div
                 id="section-shortcut-translate"
                 ref={(el) => { sectionRefs.current["section-shortcut-translate"] = el; }}
-                className="py-3 border-b border-border/50"
+                className="py-2.5 border-b border-border/50"
               >
-                <div className="text-sm font-medium text-foreground mb-1">翻译快捷键</div>
-                <div className="text-xs text-muted-foreground mb-3">双击目标键触发翻译</div>
+                <div className="text-sm font-medium text-foreground mb-2">翻译快捷键</div>
+                <div className="text-xs text-muted-foreground mb-2">双击目标键触发翻译</div>
                 <ShortcutRecorder
                   value={shortcuts.translate}
                   onChange={(value) => {
@@ -611,8 +792,8 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                 ref={(el) => { sectionRefs.current["section-shortcut-show-main"] = el; }}
                 className="py-3"
               >
-                <div className="text-sm font-medium text-foreground mb-1">显示主窗口</div>
-                <div className="text-xs text-muted-foreground mb-3">快速唤起主窗口</div>
+                <div className="text-sm font-medium text-foreground mb-2">显示主窗口</div>
+                <div className="text-xs text-muted-foreground mb-2">双击目标键唤起主窗口</div>
                 <ShortcutRecorder
                   value={shortcuts.show_main}
                   onChange={(value) => {
@@ -623,16 +804,6 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
                   disabled={!shortcutsLoaded}
                 />
               </div>
-            </div>
-
-            <div className="pt-6 pb-2">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="w-full px-4 py-2.5 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 font-medium disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {saving ? "保存中..." : "保存设置"}
-              </button>
             </div>
 
           </div>
@@ -652,11 +823,14 @@ export function SettingsPanel({ onClose }: SettingsPanelProps) {
 function AddKeyModal({ open, onClose, onConfirm }: {
   open: boolean;
   onClose: () => void;
-  onConfirm: (name: string, appId: string, key: string, sort: number) => Promise<void>;
+  onConfirm: (name: string, appId: string, key: string, url: string, sort: number, asDefault?: boolean) => Promise<void>;
+  currentDefaultEngine?: string;
 }) {
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
   const [newKey, setNewKey] = useState("");
+  const [newUrl, setNewUrl] = useState("");
+  const [asDefault, setAsDefault] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   if (!open) return null;
@@ -665,10 +839,12 @@ function AddKeyModal({ open, onClose, onConfirm }: {
     if (!newName.trim() || !newKey.trim()) return;
     setSubmitting(true);
     try {
-      await onConfirm(newName, newId, newKey, 0);
+      await onConfirm(newName, newId, newKey, newUrl, 0, asDefault);
       setNewName("");
       setNewId("");
       setNewKey("");
+      setNewUrl("");
+      setAsDefault(false);
     } finally {
       setSubmitting(false);
     }
@@ -677,7 +853,7 @@ function AddKeyModal({ open, onClose, onConfirm }: {
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-white dark:bg-card rounded-lg p-6 w-full max-w-md shadow-2xl">
-        <h3 className="text-base font-semibold mb-4 text-foreground">添加翻译服务</h3>
+        <h3 className="text-base font-semibold mb-3 text-foreground">添加翻译服务</h3>
         <div className="space-y-4 mb-6">
           <div>
             <label className="text-sm font-medium text-foreground mb-2 block">名称（必填，作为服务标识）</label>
@@ -705,6 +881,29 @@ function AddKeyModal({ open, onClose, onConfirm }: {
               placeholder="粘贴或输入 Key"
               type="password"
               className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium text-foreground mb-2 block">API URL（可选，默认使用内置地址）</label>
+            <input
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="例如: https://api.example.com/translate"
+              className="w-full px-3 py-2 border rounded-md text-sm bg-background focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+          </div>
+          <div className="flex items-center justify-between px-3 py-2.5 border rounded-md bg-muted/20">
+            <div>
+              <div className="text-sm font-medium text-foreground">设为默认翻译引擎</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {asDefault ? "翻译结果将优先使用此服务" : "保持当前默认引擎"}
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={asDefault}
+              onChange={(e) => setAsDefault(e.target.checked)}
+              className="h-4 w-4 rounded border-border text-primary focus:ring-primary shrink-0"
             />
           </div>
         </div>

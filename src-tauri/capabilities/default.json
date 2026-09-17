@@ -3,7 +3,7 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": ["main", "translate"],
-  "permissions": [
+    "permissions": [
     "core:default",
     "core:webview:allow-create-webview-window",
     "core:window:default",
@@ -18,6 +18,10 @@
     "clipboard-manager:allow-read-text",
     "global-shortcut:default",
     "core:tray:default",
-    "window-state:default"
+    "window-state:default",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+    "dialog:default"
   ]
 }
