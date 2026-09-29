@@ -6,7 +6,7 @@
  * 词条类型 DictEntry 沿用 src 形状（word/word_raw/definition/audio_ref），
  * dictionary_name 由查询侧可选附带，缺失时回退词典占位名。
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   dictGetResource,
   dictLoadResources,
@@ -82,14 +82,54 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
     [parsed, scopedResources, dictionaryName],
   );
 
-  /** toPlayableAudioUrl 是唯一容器嗅探处（规格 #3）：null = OggS/Speex 不可播 → 静默降级不报错 */
+  /** Audio 实例缓存：同一 dataUrl 复用（重复点击零延迟；首次点击等 canplay 再发声） */
+  const audioCacheRef = useRef(new Map<string, HTMLAudioElement>());
+
+  /** toPlayableAudioUrl 是唯一容器嗅探处（规格 #3）：null = OggS/Speex 不可播 → 静默降级不报错
+   *  首次点击无声根因：base64 dataUrl 首次解码异步，READY_STATE=0 时立即 play() 在
+   *  WKWebView 常静默无效 → 统一先等 canplay（含 4s 兜底）再 play */
   const playPlayable = (dataUrl: string) => {
     const playable = toPlayableAudioUrl(dataUrl);
     if (!playable) {
       console.info("[DictEntryView] 音频容器不可播（OggS/Speex），按无资源降级");
       return;
     }
-    void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+    let audio = audioCacheRef.current.get(playable);
+    if (!audio) {
+      audio = new Audio();
+      audio.preload = "auto";
+      audio.src = playable;
+      audioCacheRef.current.set(playable, audio);
+    }
+    audio.currentTime = 0;
+    const start = () => {
+      void audio!.play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+    };
+    if (audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
+      start();
+      return;
+    }
+    let done = false;
+    const once = () => {
+      if (done) return;
+      done = true;
+      audio!.removeEventListener("canplay", once);
+      audio!.removeEventListener("error", onError);
+      start();
+    };
+    const onError = () => {
+      if (done) return;
+      done = true;
+      audio!.removeEventListener("canplay", once);
+      audio!.removeEventListener("error", onError);
+      // 缓存的坏实例直接踢掉，下次点击重建
+      audioCacheRef.current.delete(playable);
+      console.error("[DictEntryView] 音频加载失败（已重置缓存）:", audio.error);
+    };
+    audio.addEventListener("canplay", once, { once: true });
+    audio.addEventListener("error", onError, { once: true });
+    // 大 dataUrl 兜底：canplay 迟迟不来也从第 4 秒强制尝试（避免首次点击无响应）
+    setTimeout(once, 4000);
   };
 
   /** 提取并播放单个 audio 资源（缓存命中直接复用 dataUrl；容器不可播 = 无资源，静默降级） */
