@@ -119,7 +119,14 @@ pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
                         *last = Some(text.clone());
                     }
                     if let Some(window) = app.get_webview_window("translate") {
-                        if let Ok(Some(monitor)) = window.current_monitor() {
+                        // 光标所在显示器优先（隐藏窗口的 current_monitor 可能停留在旧显示器，
+                        // 造成跨屏时按错误边界钳制 → 弹窗位置偏差的根因）
+                        let monitor = app
+                            .monitor_from_point(cursor_x, cursor_y)
+                            .ok()
+                            .flatten()
+                            .or_else(|| window.current_monitor().ok().flatten());
+                        if let Some(monitor) = monitor {
                             let scale = monitor.scale_factor();
                             let monitor_logical_width = monitor.size().width as f64 / scale;
                             let monitor_logical_height = monitor.size().height as f64 / scale;
@@ -128,10 +135,12 @@ pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
                             let size = window
                                 .inner_size()
                                 .unwrap_or(tauri::PhysicalSize::new(480, 360));
+                            // 弹窗逻辑尺寸按「光标所在显示器」的 scale 折算，避免跨屏 scale 混算偏差
                             let popup_logical_width = size.width as f64 / scale;
                             let popup_logical_height = size.height as f64 / scale;
-                            let mut px = cursor_x;
-                            let mut py = cursor_y;
+                            // 光标右下方留 12px 间距，避免弹窗压住鼠标与原选区
+                            let mut px = cursor_x + 12.0;
+                            let mut py = cursor_y + 12.0;
                             if px + popup_logical_width > monitor_logical_x + monitor_logical_width
                             {
                                 px =

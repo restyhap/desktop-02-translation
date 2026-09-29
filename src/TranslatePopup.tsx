@@ -57,13 +57,39 @@ function TranslatePopup() {
   });
   const lastTextRef = useRef<string>("");
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 实时倒计时（秒）：与 hide 定时器同步跳动，0/不入计时=常驻 */
+  const [countdown, setCountdown] = useState(0);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopTick = () => {
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+  };
 
   const scheduleHide = () => {
-    if (settings.hideDelay <= 0) return;
+    if (settings.hideDelay <= 0) {
+      stopTick();
+      setCountdown(0);
+      return;
+    }
     cancelHide();
-    hideTimerRef.current = setTimeout(() => {
-      getCurrentWindow().hide().catch((err: unknown) => console.error("[popup] 隐藏窗口失败:", err));
-    }, settings.hideDelay * 1000);
+    setCountdown(settings.hideDelay);
+    // 每秒跳动 UI 倒计时；到 0 时隐藏窗口
+    tickRef.current = setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          stopTick();
+          setCountdown(0);
+          getCurrentWindow()
+            .hide()
+            .catch((err: unknown) => console.error("[popup] 隐藏窗口失败:", err));
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
   };
 
   const cancelHide = () => {
@@ -71,10 +97,13 @@ function TranslatePopup() {
       clearTimeout(hideTimerRef.current);
       hideTimerRef.current = null;
     }
+    stopTick();
+    setCountdown(0);
   };
 
   useEffect(() => {
     return () => {
+      stopTick();
       if (hideTimerRef.current) {
         clearTimeout(hideTimerRef.current);
       }
@@ -218,6 +247,7 @@ function TranslatePopup() {
         engine={currentEngine}
         opacity={Math.max(0.3, settings.opacity / 100)}
         hideDelay={settings.hideDelay}
+        countdown={countdown}
         targetLang={settings.targetLang}
         onEngineChange={(service) => {
           setCurrentEngine(service);
@@ -244,6 +274,8 @@ interface PopupCardProps {
   engine: string;
   opacity: number;
   hideDelay: number;
+  /** 实时倒计时（秒），0=无计时 */
+  countdown: number;
   targetLang: Language;
   onEngineChange: (service: string) => void;
   onClose: () => void;
@@ -255,7 +287,7 @@ interface PopupCardProps {
 
 function PopupCard({
   result, visibleText, loading, error, engines, engine,
-  opacity, hideDelay, targetLang, onEngineChange, onClose,
+  opacity, hideDelay, countdown, targetLang, onEngineChange, onClose,
   onCancelHide, onScheduleHide, onStartDrag, onStartResize,
 }: PopupCardProps) {
   const { t } = useAppLocale();
@@ -411,8 +443,8 @@ function PopupCard({
           >
             <StarIcon size={12} filled={favorite} />
           </button>
-          <span className="ml-auto text-[10px] text-ink-3">
-            {hideDelay > 0 ? t("popup.autoHideIn", { n: hideDelay }) : t("popup.stay")}
+          <span className="ml-auto font-mono text-[10px] tabular-nums text-ink-3">
+            {hideDelay > 0 ? t("popup.autoHideIn", { n: countdown }) : t("popup.stay")}
           </span>
         </div>
       </div>
