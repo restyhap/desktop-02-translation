@@ -5,8 +5,17 @@
  * 数据：App 状态机下传（src dict_* 命令），本页只做交互编排；build 走 src 全库构建。
  */
 import { useEffect, useRef, useState } from "react";
-import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
-import { useSortable } from "@dnd-kit/react/sortable";
+// @dnd-kit/core 排序（横向单行 chips；Kickstand 与 SettingsPanel 服务排序同族手法，但此处用 core 实测换位生效）
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { SortableContext, rectSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { arrayMove } from "@dnd-kit/helpers";
 import type { DictInfo } from "@/storage/dict";
 import type { DictEntry } from "@/components/DictEntryView";
@@ -53,6 +62,23 @@ export function DictionaryPanel({
   const [query, setQuery] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  // 拖拽中的词典（供 DragOverlay 复制渲染）
+  const [dragging, setDragging] = useState<DictInfo | null>(null);
+  // 拖拽 6px 阈值才激活，与 chip 点击选中天然区分
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+
+  const handleDragStart = (e: DragStartEvent) => {
+    setDragging(dicts.find((d) => d.id === Number(e.active.id)) ?? null);
+  };
+  const handleDragEnd = (e: DragEndEvent) => {
+    setDragging(null);
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const from = dicts.findIndex((d) => d.id === Number(active.id));
+    const to = dicts.findIndex((d) => d.id === Number(over.id));
+    if (from < 0 || to < 0 || from === to) return;
+    onReorder(arrayMove(dicts, from, to).map((d) => d.id));
+  };
 
   const run = () => {
     const tt = query.trim();
@@ -109,31 +135,29 @@ export function DictionaryPanel({
       {/* 词典选择 chips + 重建：单行横向滚动 + 拖拽排序（顺序经 App 落 settings.dictOrder） */}
       <div className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-bg-inset p-1">
         <span className="shrink-0 pl-1.5 text-[11px] text-ink-3">{t("dict.label")}</span>
-        <DragDropProvider
-          onDragOver={(event) => {
-            const { source, target } = event.operation;
-            if (!source || !target || source.id === target.id) return;
-            const from = dicts.findIndex((d) => d.id === Number(source.id));
-            const to = dicts.findIndex((d) => d.id === Number(target.id));
-            if (from < 0 || to < 0 || from === to) return;
-            onReorder(arrayMove(dicts, from, to).map((d) => d.id));
-          }}
+        <DndContext
+          sensors={sensors}
+          onDragStart={handleDragStart}
+          onDragEnd={handleDragEnd}
+          onDragCancel={() => setDragging(null)}
         >
-          {dicts.map((d, index) => (
-            <SortableDictChip key={d.id} dict={d} index={index} active={d.id === activeDict} locale={locale} t={t} onSelect={onSelect} />
-          ))}
+          {/* 横向 chips：rectSortingStrategy 按矩形换位（同一行内换序） */}
+          <SortableContext items={dicts.map((d) => d.id)} strategy={rectSortingStrategy}>
+            <div className="flex min-w-0 items-center gap-1">
+              {dicts.map((d) => (
+                <SortableDictChip key={d.id} dict={d} active={d.id === activeDict} locale={locale} t={t} onSelect={onSelect} />
+              ))}
+            </div>
+          </SortableContext>
           <DragOverlay>
-            {(source) => {
-              const d = dicts.find((x) => x.id === Number(source.id));
-              return d ? (
-                <span className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent px-2 text-[11px] text-accent-fg shadow-[var(--shadow-popup)]">
-                  <BookIcon size={11} />
-                  {d.name}
-                </span>
-              ) : null;
-            }}
+            {dragging ? (
+              <span className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent px-2 text-[11px] text-accent-fg shadow-[var(--shadow-popup)]">
+                <BookIcon size={11} />
+                {dragging.name}
+              </span>
+            ) : null}
           </DragOverlay>
-        </DragDropProvider>
+        </DndContext>
         <button
           onClick={() => setMoreOpen((v) => !v)}
           className="ml-1 text-[11px] text-ink-3 hover:text-accent"
@@ -210,24 +234,28 @@ export function DictionaryPanel({
   );
 }
 
-/** 可拖拽词典 chip（点击=选中，拖动=换序；dnd-kit 手势阈值与 click 天然区分） */
+/** 可拖拽词典 chip（点击=选中，拖动=换序；activationConstraint 6px 与 click 天然区分） */
 function SortableDictChip({
-  dict, index, active, locale, t, onSelect,
+  dict, active, locale, t, onSelect,
 }: {
   dict: DictInfo;
-  index: number;
   active: boolean;
   locale: UiLocale;
   t: TFn;
   onSelect: (id: number) => void;
 }) {
-  const { ref, isDragging } = useSortable({
-    id: dict.id,
-    index,
-    transition: { duration: 250, easing: "cubic-bezier(0.65, 0, 0.35, 1)" },
-  });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: dict.id });
   return (
-    <div ref={ref} className={`shrink-0 ${isDragging ? "opacity-50" : ""}`}>
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      style={{
+        transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+        transition,
+      }}
+      className={`shrink-0 touch-none ${isDragging ? "opacity-50" : ""}`}
+    >
       <button
         onClick={() => onSelect(dict.id)}
         title={`${fmtCount(dict.entry_count, locale, t)} · ${dict.name}`}
@@ -237,9 +265,6 @@ function SortableDictChip({
       >
         <BookIcon size={11} />
         {dict.name}
-        <span className={active ? "text-accent-fg/70" : "text-ink-3"}>
-          {dict.entry_count > 0 ? fmtCount(dict.entry_count, locale, t) : t("dict.noData")}
-        </span>
       </button>
     </div>
   );

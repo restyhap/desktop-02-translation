@@ -1,7 +1,7 @@
 /**
  * 词典词条视图 — v2 视觉（front-preview）× src 资源能力
  *
- * 视觉：文章式词条卡（词典名头 + 巨大衬线词头 + 义项排印 + 资源 chips 懒加载）。
+ * 视觉：文章式词条卡（词典名头 + 巨大衬线词头 + 义项排印 + 行内小喇叭）。
  * 数据：@/storage/dict 的 dictLoadResources / dictGetResource（zip_file + mime/data_base64）。
  * 词条类型 DictEntry 沿用 src 形状（word/word_raw/definition/audio_ref），
  * dictionary_name 由查询侧可选附带，缺失时回退词典占位名。
@@ -32,7 +32,7 @@ interface DictEntryViewProps {
 
 interface LoadedResource {
   key: string;
-  dataUrl: string | null;
+  dataUrl: string;
 }
 
 /**
@@ -78,10 +78,9 @@ function toPlayableAudioUrl(dataUrl: string): string {
 export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
   const { t } = useAppLocale();
   const lines = useParsed(entry.definition);
-  // 资源 chips（懒加载清单）
+  // 资源清单（懒加载；Plan B 下 resources 表可能为空 → 行内喇叭静默失败可接受）
   const [resources, setResources] = useState<DictResource[] | null>(null);
-  const [resLoading, setResLoading] = useState(false);
-  // 已加载的资源内容：dataUrl（image 直接显示；audio 播放）
+  // 已加载的资源内容：dataUrl（audio 播放缓存）
   const [loaded, setLoaded] = useState<LoadedResource[]>([]);
   const [audioSrc, setAudioSrc] = useState<string | null>(null);
 
@@ -101,71 +100,49 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
     return () => { alive = false; };
   }, [entry.word]);
 
-  const loadChip = async () => {
-    if (resources) {
-      setResources(null);
-      return;
-    }
-    setResLoading(true);
-    try {
-      const list = await dictLoadResources(entry.word);
-      setResources(list);
-    } catch (err) {
-      console.error("[DictEntryView] 加载资源清单失败:", err);
-      setResources([]);
-    } finally {
-      setResLoading(false);
-    }
-  };
-
-  const openResource = async (res: DictResource) => {
+  /** 提取并播放单个 audio 资源（缓存命中直接复用 dataUrl） */
+  const playRes = async (res: DictResource) => {
     const key = `${res.zip_file}/${res.filename}`;
     const known = loaded.find((l) => l.key === key);
-    if (!known) {
-      try {
-        const data = await dictGetResource(res.zip_file, res.filename);
-        const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
-        setLoaded((prev) => [...prev, { key, dataUrl }]);
-        if (res.kind === "audio") {
-          // 首次提取即自动播放（词头喇叭主链路依赖这里）
-          const playable = toPlayableAudioUrl(dataUrl);
-          setAudioSrc(playable);
-          void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
-        }
-        return;
-      } catch (err) {
-        console.error("[DictEntryView] 提取词典资源失败:", err);
-        setLoaded((prev) => [...prev, { key, dataUrl: null }]);
-        return;
-      }
-    }
-    if (res.kind === "audio" && known.dataUrl) {
+    if (known?.dataUrl) {
       setAudioSrc(known.dataUrl);
-      void new Audio(known.dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+      void new Audio(toPlayableAudioUrl(known.dataUrl)).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+      return;
     }
+    const data = await dictGetResource(res.zip_file, res.filename);
+    const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
+    setLoaded((prev) => [...prev, { key, dataUrl }]);
+    // 伪 WAV 容器重打包后播放（词头/行内喇叭共用链路）
+    const playable = toPlayableAudioUrl(dataUrl);
+    setAudioSrc(playable);
+    void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
   };
 
-  const images = loaded.filter((l) => l.dataUrl?.startsWith("data:image"));
-
-  /** 词头喇叭：取首个 audio 资源播放（点击资源 chip 的懒加载链路复用） */
+  /** 词头喇叭：取首个 audio 资源播放 */
   const speak = async () => {
     try {
       const list = await dictLoadResources(entry.word);
       const audio = list.find((r) => r.kind === "audio");
-      if (!audio) return;
-      const key = `${audio.zip_file}/${audio.filename}`;
-      const known = loaded.find((l) => l.key === key);
-      if (known?.dataUrl) {
-        void new Audio(toPlayableAudioUrl(known.dataUrl)).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
-        return;
-      }
-      const data = await dictGetResource(audio.zip_file, audio.filename);
-      const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
-      setLoaded((prev) => [...prev, { key, dataUrl }]);
-      setAudioSrc(dataUrl);
-      void new Audio(dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+      if (audio) await playRes(audio);
     } catch (err) {
       console.error("[DictEntryView] 词头播放失败:", err);
+    }
+  };
+
+  /**
+   * 行内小喇叭：按 filename 在**当前词典范围**内解析资源。
+   * dictLoadResources 的 resources JOIN 已带 zip_file（天然同库），
+   * 按 filename 精确匹配后走 dictGetResource + toPlayableAudioUrl 播放；
+   * 找不到（跨库/资源表空）→ 静默失败，不发起额外跨库调用。
+   */
+  const speakFile = async (filename: string) => {
+    try {
+      const list = resources ?? await dictLoadResources(entry.word);
+      const res = list.find((r) => r.kind === "audio" && r.filename === filename);
+      if (!res) return;
+      await playRes(res);
+    } catch (err) {
+      console.error("[DictEntryView] 行内播放失败:", err);
     }
   };
 
@@ -190,43 +167,13 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
           entryTitle={entry.word_raw || entry.word}
           // 探测到 audio 资源才显示词头喇叭，避免无发音词典出现死按钮
           onSpeak={resources?.some((r) => r.kind === "audio") ? speak : undefined}
+          onSpeakFile={speakFile}
         />
 
-        {/* 资源 chips：点击展开懒加载清单 */}
-        <div className="flex items-center gap-1.5 border-t border-line px-4 py-2">
-          <button
-            onClick={loadChip}
-            className="rounded-md bg-bg-inset px-2 py-1 text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
-          >
-            {t("dict.resources")}
-            {resources ? " ▾" : resLoading ? " …" : ""}
-          </button>
-          {resources?.map((res) => {
-            const key = `${res.zip_file}/${res.filename}`;
-            return (
-              <button
-                key={key}
-                onClick={() => openResource(res)}
-                title={res.kind === "audio" ? t("dict.playAudio") : t("dict.viewImage")}
-                className="rounded-md border border-line px-2 py-1 text-[11px] text-ink-2 transition-colors hover:border-accent/40 hover:text-accent"
-              >
-                {res.kind === "audio" ? "🔊" : "🖼"} {res.filename}
-              </button>
-            );
-          })}
-        </div>
-        {/* 音频控件 + 内嵌图片 */}
-        {(audioSrc || images.length > 0) && (
+        {/* 音频控件（播放后显示） */}
+        {audioSrc && (
           <div className="border-t border-line px-4 py-2">
-            {audioSrc && <audio controls src={audioSrc} className="h-7 w-44" />}
-            {images.map((img) => (
-              <img
-                key={img.key}
-                src={img.dataUrl as string}
-                alt={t("dict.imageAlt")}
-                className="max-h-64 rounded-md border border-line"
-              />
-            ))}
+            <audio controls src={audioSrc} className="h-7 w-44" />
           </div>
         )}
       </div>
