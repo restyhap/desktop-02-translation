@@ -1,5 +1,5 @@
 use std::fs;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
 mod app;
@@ -37,7 +37,7 @@ pub fn run() {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
 
-            app.manage(KeyboardHookProcess(Mutex::new(None)));
+            app.manage(KeyboardHookProcess(Arc::new(Mutex::new(None))));
 
             let initial_shortcuts = load_shortcuts(app.handle());
             app.manage(Mutex::new(initial_shortcuts));

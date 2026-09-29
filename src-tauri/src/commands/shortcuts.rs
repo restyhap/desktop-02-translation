@@ -3,7 +3,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use crate::app::config::{save_shortcuts, ShortcutConfig};
-use crate::app::keyboard_hook::{spawn_keyboard_hook, KeyboardHookProcess};
+use crate::app::keyboard_hook::restart_keyboard_hook;
 
 #[tauri::command]
 pub fn get_shortcuts_cmd(app: tauri::AppHandle) -> Result<ShortcutConfig, String> {
@@ -21,15 +21,7 @@ pub fn update_shortcuts_cmd(app: tauri::AppHandle, config: ShortcutConfig) -> Re
         *state.lock().unwrap() = config.clone();
     }
 
-    {
-        let hook_state = app.state::<KeyboardHookProcess>();
-        let mut guard = hook_state.0.lock().unwrap();
-        if let Some(mut child) = guard.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-    spawn_keyboard_hook(app);
+    restart_keyboard_hook(&app);
 
     Ok(())
 }

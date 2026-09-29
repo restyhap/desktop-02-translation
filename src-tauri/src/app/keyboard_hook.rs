@@ -1,6 +1,8 @@
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 use tauri::{Emitter, LogicalPosition, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -8,16 +10,11 @@ use crate::app::config::{extract_keys_from_shortcut, ShortcutConfig};
 
 static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
 
-pub struct KeyboardHookProcess(pub Mutex<Option<std::process::Child>>);
+/// keyboard-hook 子进程控制柄（Arc 保证看门狗线程也能访问）
+pub struct KeyboardHookProcess(pub Arc<Mutex<Option<Child>>>);
 
-pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_default();
-
-    let hook_bin = exe_dir.join("keyboard-hook");
-
+/// 读取当前快捷键配置并生成 keyboard-hook 启动参数
+fn hook_args(app: &tauri::AppHandle) -> Vec<String> {
     let shortcuts = app.state::<Mutex<ShortcutConfig>>();
     let config = shortcuts.lock().unwrap().clone();
 
@@ -28,41 +25,52 @@ pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
     if !config.show_main.is_empty() {
         args.push(format!("SHOW_MAIN={}", extract_keys_from_shortcut(&config.show_main)));
     }
+    args
+}
 
+/// 启动 keyboard-hook 子进程；失败返回 false 交给看门狗重试
+fn launch_hook(app: &tauri::AppHandle) -> bool {
+    let args = hook_args(app);
     if args.is_empty() {
         println!("ℹ 未设置快捷键，不启动 keyboard-hook");
-        return;
+        return false;
     }
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default();
+
+    let hook_bin = exe_dir.join("keyboard-hook");
 
     let mut cmd = Command::new(&hook_bin);
     cmd.args(&args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let child = match cmd.spawn() {
+    let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
             eprintln!(
                 "[main] keyboard-hook 启动失败: {} (路径: {:?})",
                 e, hook_bin
             );
-            return;
+            return false;
         }
     };
 
     eprintln!("[main] keyboard-hook spawned, PID={}", child.id());
+    let child_stderr = child.stderr.take();
+    let child_stdout = child.stdout.take();
 
     {
         let hook_state = app.state::<KeyboardHookProcess>();
         *hook_state.0.lock().unwrap() = Some(child);
     }
 
-    let (child_stderr, child_stdout) = {
-        let hook_state = app.state::<KeyboardHookProcess>();
-        let mut guard = hook_state.0.lock().unwrap();
-        let child = guard.as_mut().unwrap();
-        (child.stderr.take(), child.stdout.take())
-    };
+
+    // 统一事件处理之前：stdout 事件线程需要 AppHandle 的所有权，克隆给闭包
+    let ev_app = app.clone();
 
     if let Some(stderr) = child_stderr {
         std::thread::spawn(move || {
@@ -75,6 +83,7 @@ pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
 
     if let Some(stdout) = child_stdout {
         std::thread::spawn(move || {
+            let app = ev_app;
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
                 let trimmed = line.trim();
@@ -183,4 +192,49 @@ pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
     }
 
     println!("✓ keyboard-hook 子进程已启动");
+    true
+}
+
+/// 重启 keyboard-hook（快捷键配置更新后调用）：杀掉旧进程再按新配置拉起
+pub fn restart_keyboard_hook(app: &tauri::AppHandle) {
+    {
+        let state = app.state::<KeyboardHookProcess>();
+        let mut guard = state.0.lock().unwrap();
+        if let Some(mut old) = guard.take() {
+            let _ = old.kill();
+        }
+    }
+    launch_hook(app);
+}
+
+/// 看门狗：无论何种原因（spawn 失败/进程闪退/二进制半写状态被拉起后立刻死亡），
+/// keyboard-hook 不在运行就重新拉起，保证快捷键热键链路自愈
+fn start_hook_watchdog(app: tauri::AppHandle) {
+    let state = app.state::<KeyboardHookProcess>().0.clone();
+    thread::spawn(move || loop {
+        thread::sleep(Duration::from_secs(3));
+        // 每次检查都重读配置：用户在设置里新增/删除快捷键也能被接住
+        let args = hook_args(&app);
+        if args.is_empty() {
+            continue;
+        }
+        let dead = {
+            let mut guard = state.lock().unwrap();
+            match guard.as_mut() {
+                // 进程活着且未退出 → 无需处理
+                Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+                None => true,
+            }
+        };
+        if dead {
+            if !launch_hook(&app) {
+                eprintln!("[main] keyboard-hook 看门狗: 本次拉起失败，3 秒后重试");
+            }
+        }
+    });
+}
+
+pub fn spawn_keyboard_hook(app: tauri::AppHandle) {
+    start_hook_watchdog(app.clone());
+    launch_hook(&app);
 }
