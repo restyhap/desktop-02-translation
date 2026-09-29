@@ -33,7 +33,9 @@ export interface DictLine {
 const DSL_RX = /\[\/?\*(?:\s*\])?|\[m\d?\]|\[\/m\]|\[s\]|\[\/s\]|\[c[ \]]|\[\/c\]|\[p\]|\[\/p\]|\[ex\]|\[\/ex\]/;
 
 /** 已知 DSL 包装标签 → 统一清除（内容保留） */
-const DSL_STRAY_RX = /\[\/?(?:m\d?|p|ex|s|ref[^\]\n]*|\*)\]/g;
+const DSL_STRAY_RX = /\[\/?(?:m\d?|p|ex|s|ref[^\]\n]*|\*|lang(?:[^\]\n]*)?|trn)\]/g;
+/** DSL 反斜杠转义（\[ → [ 等）还原 */
+const DSL_ESCAPE_RX = /\\([\\\]{}&*~@#^$%()[\]])/g;
 /** DSL 基础字体标记 → HTML 等价物 */
 const DSL_FONT_PAIRS: Array<[{ rx: RegExp; to: string }, { rx: RegExp; to: string }]> = [
   [{ rx: /\[b\]/g, to: "<b>" }, { rx: /\[\/b\]/g, to: "</b>" }],
@@ -140,7 +142,9 @@ function parseDslDefinition(source: string): DictLine[] {
     }
 
     // 清洗正文: c→span、p→徽章、已知杂牌清除、b/i/u/sub/sup→HTML
-    body = convertPtags(convertCtags(body)).replace(DSL_STRAY_RX, "");
+    body = convertPtags(convertCtags(body)).replace(DSL_STRAY_RX, "").replace(DSL_ESCAPE_RX, "$1");
+    // 编号义项的句点若在「1」之后（<b>1</b>. 形式）会残留在正文开头，清掉
+    if (type === "sense" || type === "subsense") body = body.replace(/^\.?\s*/, "");
     for (const [open, close] of DSL_FONT_PAIRS) {
       body = body.replace(open.rx, open.to).replace(close.rx, close.to);
     }
