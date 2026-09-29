@@ -35,6 +35,46 @@ interface LoadedResource {
   dataUrl: string | null;
 }
 
+/**
+ * Longman/GoldenDict 系列 .wav 是"伪 WAV 容器"：RIFF 头的 wFormatTag=0x55（非 PCM），
+ * data 块里实际装的是 MP3 帧 —— 系统/WebKit 按容器解析会失败（afinfo/AudioFileOpen 均不识别）。
+ * 处理：识别该容器后剥离 RIFF 头，把 data 块载荷重标为 audio/mpeg。
+ * WebAudio decodeAudioData 实测可解（0.6s mono 22050Hz）。
+ */
+function toPlayableAudioUrl(dataUrl: string): string {
+  if (!dataUrl.startsWith("data:")) return dataUrl;
+  const [meta, b64] = dataUrl.split(",", 2);
+  if (!/audio\/(wav|x-wav)/.test(meta) || !b64) return dataUrl;
+  try {
+    // atob → 字节级嗅探：RIFF....WAVEfmt 且 wFormatTag != 1
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const text = String.fromCharCode(...bytes.subarray(0, 20));
+    const fmtTag = bytes[20] | (bytes[21] << 8);
+    if (!text.startsWith("RIFF") || fmtTag === 1) return dataUrl; // 真 PCM WAV → 原样
+    // 找 "data" 块，载荷重打包为 mp3 data URL
+    for (let p = 12; p + 8 <= bytes.length; ) {
+      const id = String.fromCharCode(bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]);
+      const size =
+        (bytes[p + 4] | (bytes[p + 5] << 8) | (bytes[p + 6] << 16) | (bytes[p + 7] << 24)) >>> 0;
+      if (id === "data") {
+        const payload = bytes.subarray(p + 8, Math.min(p + 8 + size, bytes.length));
+        let out = "";
+        const chunk = 0x8000;
+        for (let j = 0; j < payload.length; j += chunk) {
+          out += String.fromCharCode(...payload.subarray(j, j + chunk));
+        }
+        return `data:audio/mpeg;base64,${btoa(out)}`;
+      }
+      p += 8 + size; // RIFF 对齐可忽略（解析只认 id/size，容错）
+    }
+    return dataUrl;
+  } catch {
+    return dataUrl;
+  }
+}
+
 export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
   const { t } = useAppLocale();
   const lines = useParsed(entry.definition);
@@ -88,8 +128,9 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
         setLoaded((prev) => [...prev, { key, dataUrl }]);
         if (res.kind === "audio") {
           // 首次提取即自动播放（词头喇叭主链路依赖这里）
-          setAudioSrc(dataUrl);
-          void new Audio(dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+          const playable = toPlayableAudioUrl(dataUrl);
+          setAudioSrc(playable);
+          void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
         }
         return;
       } catch (err) {
@@ -115,7 +156,7 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
       const key = `${audio.zip_file}/${audio.filename}`;
       const known = loaded.find((l) => l.key === key);
       if (known?.dataUrl) {
-        void new Audio(known.dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+        void new Audio(toPlayableAudioUrl(known.dataUrl)).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
         return;
       }
       const data = await dictGetResource(audio.zip_file, audio.filename);
