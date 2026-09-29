@@ -85,13 +85,11 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
   const [resources, setResources] = useState<DictResource[] | null>(null);
   // 已加载的资源内容：dataUrl（audio 播放缓存）
   const [loaded, setLoaded] = useState<LoadedResource[]>([]);
-  const [audioSrc, setAudioSrc] = useState<string | null>(null);
 
   useEffect(() => {
     // 换词时重置资源区
     setResources(null);
     setLoaded([]);
-    setAudioSrc(null);
   }, [entry.word]);
 
   // 挂载即探测资源清单：决定词头喇叭是否显示（无 audio 资源的词典不再给死按钮）
@@ -121,7 +119,6 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
     const key = `${res.zip_file}/${res.filename}`;
     const known = loaded.find((l) => l.key === key);
     if (known?.dataUrl) {
-      setAudioSrc(known.dataUrl);
       void new Audio(toPlayableAudioUrl(known.dataUrl)).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
       return;
     }
@@ -130,7 +127,6 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
     setLoaded((prev) => [...prev, { key, dataUrl }]);
     // 伪 WAV 容器重打包后播放（词头/行内喇叭共用链路）
     const playable = toPlayableAudioUrl(dataUrl);
-    setAudioSrc(playable);
     void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
   };
 
@@ -196,13 +192,6 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
           onSpeak={scopedResources?.some((r) => r.kind === "audio") ? speak : undefined}
           onSpeakFile={speakFile}
         />
-
-        {/* 音频控件（播放后显示） */}
-        {audioSrc && (
-          <div className="border-t border-line px-4 py-2">
-            <audio controls src={audioSrc} className="h-7 w-44" />
-          </div>
-        )}
       </div>
     </div>
   );

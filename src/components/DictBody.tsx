@@ -88,9 +88,9 @@ function SoundBtns({ sounds, onSpeakFile }: { sounds?: string[]; onSpeakFile?: (
           key={f}
           onClick={() => onSpeakFile(f)}
           title={f}
-          className="grid h-5 w-5 shrink-0 place-items-center rounded text-ink-3 transition-colors hover:bg-hover hover:text-accent"
+          className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink-3 transition-colors hover:bg-hover hover:text-accent"
         >
-          <Volume2Icon size={12} />
+          <Volume2Icon size={14} />
         </button>
       ))}
     </span>
@@ -103,7 +103,7 @@ interface PronVariant {
   tag: PronTag;
 }
 
-/** 音标区一排带标注的发音按钮（英/美，无前缀则只显示喇叭） */
+/** 音标区一排带标注的发音按钮（英/美，无前缀则只显示喇叭）；标注与 title 走 i18n */
 function PronButtons({
   variants,
   onSpeakFile,
@@ -111,20 +111,24 @@ function PronButtons({
   variants: PronVariant[];
   onSpeakFile: (f: string) => void;
 }) {
+  const { t } = useAppLocale();
   if (variants.length === 0) return null;
   return (
     <span className="flex shrink-0 items-center gap-1">
-      {variants.map((v) => (
-        <button
-          key={v.file}
-          onClick={() => onSpeakFile(v.file)}
-          title={v.file}
-          className="flex h-6 items-center gap-1 rounded-md bg-accent-soft px-1.5 text-[10px] text-accent transition-colors hover:bg-accent hover:text-accent-fg"
-        >
-          <Volume2Icon size={11} />
-          {v.tag && <span>{v.tag}</span>}
-        </button>
-      ))}
+      {variants.map((v) => {
+        const tagKey = v.tag === "英音" ? "dict.tagBrE" : "dict.tagAmE";
+        return (
+          <button
+            key={v.file}
+            onClick={() => onSpeakFile(v.file)}
+            title={`${t(tagKey)} · ${v.file}`}
+            className="flex h-7 items-center gap-1 rounded-md bg-accent-soft px-2.5 text-[11px] text-accent transition-colors hover:bg-accent hover:text-accent-fg"
+          >
+            <Volume2Icon size={13} />
+            {v.tag && <span>{t(tagKey)}</span>}
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -188,9 +192,9 @@ const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() =>
           <button
             onClick={onSpeak}
             title={t("tts.speak")}
-            className="ml-auto grid h-7 w-7 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
+            className="ml-auto grid h-8 w-8 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
           >
-            <Volume2Icon size={14} />
+            <Volume2Icon size={15} />
           </button>
         )}
       </div>
