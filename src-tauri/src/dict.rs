@@ -318,7 +318,14 @@ impl Dictionary {
         let db_path = Self::get_db_path(app);
         let paths = super::db::DictPaths::get(app)?;
         if paths.is_empty() {
-            return Err("未配置词典路径，请在设置中添加".to_string());
+            // B 方案边界：全部路径被删光时，与 dictbuild 启动清空行为对齐——清空三张表而非报错，
+            // 否则旧的 dictionaries 行永远挂在列表里（删除路径后词典仍存在的问题根因）。
+            let conn = sqlite::Connection::open(&db_path)
+                .map_err(|e| format!("打开词典数据库失败: {}", e))?;
+            conn.execute("DELETE FROM resources").ok();
+            conn.execute("DELETE FROM entries_data").ok();
+            conn.execute("DELETE FROM dictionaries").ok();
+            return Ok("词典库已清空".to_string());
         }
 
         // ponytail: dictbuild 单次调用接收全部 --input; 它在启动时清空旧数据后全量重建,
