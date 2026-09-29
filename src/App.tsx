@@ -132,6 +132,8 @@ function App() {
   const [dictError, setDictError] = useState<string | null>(null);
   const [dictBuildingId, setDictBuildingId] = useState<number | null>(null);
   const [dictHasDb, setDictHasDb] = useState(true);
+  // B 方案（设置页保存路径）触发的全量重建状态：词典页据此覆盖 loading 态
+  const [dictRebuilding, setDictRebuilding] = useState(false);
 
   const loadDicts = async () => {
     try {
@@ -314,6 +316,7 @@ function App() {
             onClose={() => setSidebarTab("translate")}
             onChange={changeSettings}
             onDictsRebuilt={loadDicts}
+            onDictsRebuilding={setDictRebuilding}
           />
         </div>
       ) : (
@@ -393,6 +396,7 @@ function App() {
                 dicts={dicts}
                 activeDict={activeDict}
                 hasDb={dictHasDb}
+                rebuilding={dictRebuilding}
                 buildingId={dictBuildingId}
                 buildProgress={0}
                 onSelect={(id) => setActiveDict(id)}

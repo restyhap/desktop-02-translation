@@ -40,6 +40,8 @@ interface DictionaryPanelProps {
   dicts: DictInfo[];
   activeDict: number | null;
   hasDb: boolean;
+  /** 设置页 B 方案全量重建进行中（词典页覆盖 loading 态） */
+  rebuilding?: boolean;
   buildingId: number | null;
   buildProgress: number;
   onSelect: (id: number) => void;
@@ -55,7 +57,7 @@ interface DictionaryPanelProps {
 }
 
 export function DictionaryPanel({
-  dicts, activeDict, hasDb, buildingId, buildProgress,
+  dicts, activeDict, hasDb, rebuilding = false, buildingId, buildProgress,
   onSelect, onBuild, onReorder, entry, entryLoading, entryError, onLookup, onCloseEntry,
 }: DictionaryPanelProps) {
   const { t, locale } = useAppLocale();
@@ -103,6 +105,21 @@ export function DictionaryPanel({
     }
     // 刻意只依赖 activeDict：仅词典切换触发重查（query 保留在闭包内即可）
   }, [activeDict]);
+
+  if (rebuilding) {
+    // 设置页保存路径触发全量重建期间：显性加载屏
+    return (
+      <div className="grid h-full w-full place-items-center px-8">
+        <div className="flex flex-col items-center text-center" role="status" aria-live="polite">
+          <span
+            className="h-8 w-8 animate-spin rounded-full border-[3px] border-accent border-t-transparent"
+            aria-hidden="true"
+          />
+          <p className="mt-4 text-sm text-ink-2">{t("toast.dictRebuilding")}</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!hasDb) {
     return (

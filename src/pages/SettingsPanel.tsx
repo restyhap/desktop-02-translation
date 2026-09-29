@@ -107,12 +107,14 @@ interface SettingsPanelProps {
   onChange: (settings: AppSettings) => void;
   /** 路径保存触发全量重建完成后回调（App.loadDicts 刷新词典列表） */
   onDictsRebuilt: () => void;
+  /** 重建开始/结束回传 App（词典页覆盖 loading 态） */
+  onDictsRebuilding?: (v: boolean) => void;
 }
 
 /** 服务行展示形态：listApiKeys 基础字段 + 可选的 Key 信息 */
 type KeyRow = ApiKeyOption & { app_id?: string | null; api_key?: string };
 
-export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onDictsRebuilding }: SettingsPanelProps) {
   const { t, choice, setChoice } = useAppLocale();
   const [active, setActive] = useState<string>("general");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -283,7 +285,7 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt }: S
         {/* ===== 词典目录 ===== */}
         <div className="mt-6">
           <Section id="dict" label={t("settings.sectionDict")}>
-            <DictDirSection onDictsRebuilt={onDictsRebuilt} />
+            <DictDirSection onDictsRebuilt={onDictsRebuilt} onRebuilding={onDictsRebuilding} />
           </Section>
         </div>
 
@@ -431,7 +433,7 @@ function UpdateButton() {
 }
 
 /** 词典目录分节（getDictPaths / saveDictPaths / plugin-dialog 选目录） */
-function DictDirSection({ onDictsRebuilt }: { onDictsRebuilt: () => void }) {
+function DictDirSection({ onDictsRebuilt, onRebuilding }: { onDictsRebuilt: () => void; onRebuilding?: (v: boolean) => void }) {
   const { t } = useAppLocale();
   const { showToast } = useToast();
   const [paths, setPaths] = useState<string[]>([]);
@@ -455,6 +457,7 @@ function DictDirSection({ onDictsRebuilt }: { onDictsRebuilt: () => void }) {
   const save = (next: string[]) => {
     if (rebuilding) return;
     setRebuilding(true);
+    onRebuilding?.(true);
     showToast(t("toast.dictRebuilding"), "info");
     saveDictPaths(next)
       .then(() => {
@@ -469,7 +472,10 @@ function DictDirSection({ onDictsRebuilt }: { onDictsRebuilt: () => void }) {
         console.error("[Settings] 词典构建失败:", err);
         showToast(t("toast.dictRebuildFailed"), "error");
       })
-      .finally(() => setRebuilding(false));
+      .finally(() => {
+        setRebuilding(false);
+        onRebuilding?.(false);
+      });
   };
 
   const addPath = () => {
@@ -499,6 +505,20 @@ function DictDirSection({ onDictsRebuilt }: { onDictsRebuilt: () => void }) {
           {t("settings.addDirBtn")}
         </button>
       </div>
+      {/* 重建中的显性加载条：spinner + 说明（B 方案全量重建需数分钟） */}
+      {rebuilding && (
+        <div
+          className="flex items-center gap-2.5 py-3.5 text-xs text-ink-2"
+          role="status"
+          aria-live="polite"
+        >
+          <span
+            className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-[2px] border-accent border-t-transparent"
+            aria-hidden="true"
+          />
+          <span className="flex-1">{t("toast.dictRebuilding")}</span>
+        </div>
+      )}
       {paths.map((p, i) => (
         <div
           key={p}
