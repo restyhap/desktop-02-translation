@@ -573,8 +573,9 @@ function ApiSection({ settings, patch }: { settings: AppSettings; patch: (fn: (d
     refreshApiKeys();
   }, []);
 
-  const handleAdd = (input: { name: string; appId: string; key: string; url: string; asDefault: boolean }) => {
-    const serviceName = input.name.trim().toLowerCase().replace(/\s+/g, "_");
+  const handleAdd = (input: { name: string; appId: string; key: string; url: string; asDefault: boolean; service?: string }) => {
+    // 预设引擎用标准 service 名（Rust 分支可命柄）；自定义仍按用户名归一
+    const serviceName = input.service ?? input.name.trim().toLowerCase().replace(/\s+/g, "_");
     addApiKey(serviceName, input.name.trim(), input.appId.trim() || null, input.key.trim(), 0)
       .then(() => addEngine(serviceName, input.name.trim(), input.url.trim(), !!input.appId.trim()))
       .then(() => {
@@ -731,7 +732,7 @@ function AddKeyModal({
   onClose,
   settings,
 }: {
-  onAdd: (input: { name: string; appId: string; key: string; url: string; asDefault: boolean }) => void;
+  onAdd: (input: { name: string; appId: string; key: string; url: string; asDefault: boolean; service?: string }) => void;
   onClose: () => void;
   settings: AppSettings;
 }) {
@@ -741,7 +742,20 @@ function AddKeyModal({
   const [key, setKey] = useState("");
   const [url, setUrl] = useState("");
   const [asDefault, setAsDefault] = useState(false);
-  const valid = name.trim().length > 0 && key.trim().length > 0;
+  // 常见引擎预设：选中即用标准 service 名（Rust 侧 translate 分支可识别），避免自取名不命中
+  const PRESETS: Array<{ service: string; label: string; needsAppId: boolean }> = [
+    { service: "google", label: "Google 翻译", needsAppId: false },
+    { service: "deepl", label: "DeepL", needsAppId: false },
+    { service: "baidu", label: "百度翻译", needsAppId: true },
+    { service: "youdao", label: "有道翻译", needsAppId: true },
+    { service: "caiyun", label: "彩云小译", needsAppId: false },
+    { service: "ali", label: "阿里云机器翻译", needsAppId: true },
+    { service: "volcano", label: "火山翻译", needsAppId: true },
+  ];
+  const [preset, setPreset] = useState<string>("google");
+  const isCustom = preset === "custom";
+  const chosen = PRESETS.find((p) => p.service === preset);
+  const valid = key.trim().length > 0 && (isCustom ? name.trim().length > 0 : true);
 
   return (
     <div className="absolute inset-0 z-40 grid place-items-center bg-black/30" onClick={onClose}>
@@ -750,15 +764,43 @@ function AddKeyModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h4 className="font-display text-base font-semibold text-ink">{t("settings.addServiceTitle")}</h4>
-        <label className="mt-3 block text-xs text-ink-2">{t("settings.serviceName")}</label>
+        {/* 第一项：常见引擎下拉（选中即锁定标准 service 名，Rust 分支可直接命中） */}
+        <label className="mt-3 block text-xs text-ink-2">{t("settings.commonEngines")}</label>
+        <Select
+          aria-label={t("settings.commonEngines")}
+          value={preset}
+          onChange={(e) => {
+            const v = e.target.value;
+            setPreset(v);
+            const p = PRESETS.find((x) => x.service === v);
+            if (p) {
+              setName(p.label);
+              setUrl("");
+            } else {
+              setName("");
+              setAppId("");
+              setUrl("");
+            }
+          }}
+          className="mt-1 h-9 w-full text-xs"
+        >
+          {PRESETS.map((p) => (
+            <option key={p.service} value={p.service}>{p.label}</option>
+          ))}
+          <option value="custom">{t("settings.customService")}</option>
+        </Select>
+        <label className="mt-2.5 block text-xs text-ink-2">
+          {isCustom ? t("settings.serviceName") : t("settings.displayName")}
+        </label>
         <input
-          autoFocus
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={t("settings.serviceNamePh")}
+          placeholder={isCustom ? t("settings.serviceNamePh") : t("settings.displayNamePh")}
           className="mt-1 h-9 w-full rounded-lg border border-line bg-bg px-3 text-xs text-ink placeholder:text-ink-3 focus:border-accent focus:outline-none"
         />
-        <label className="mt-2.5 block text-xs text-ink-2">ID（百度/阿里/火山需要）</label>
+        <label className="mt-2.5 block text-xs text-ink-2">
+          ID（{chosen?.needsAppId || isCustom ? t("settings.appIdRequired") : t("settings.appIdOptional")}）
+        </label>
         <input
           value={appId}
           onChange={(e) => setAppId(e.target.value)}
@@ -783,7 +825,7 @@ function AddKeyModal({
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-bg px-3 py-2.5">
           <div className="flex-1">
             <p className="text-xs font-medium text-ink">设为默认翻译引擎</p>
-            <p className="text-[11px] text-ink-3">{settings.translation.defaultEngine}</p>
+            <p className="text-[11px] text-ink-3">{chosen && !isCustom ? chosen.label : settings.translation.defaultEngine}</p>
           </div>
           <Switch checked={asDefault} onChange={setAsDefault} />
         </div>
@@ -796,7 +838,16 @@ function AddKeyModal({
           </button>
           <button
             disabled={!valid}
-            onClick={() => onAdd({ name, appId, key, url, asDefault })}
+            onClick={() =>
+              onAdd({
+                name: name.trim(),
+                appId,
+                key,
+                url,
+                asDefault,
+                service: isCustom ? undefined : chosen?.service,
+              })
+            }
             className="h-8 rounded-md bg-accent px-4 text-xs text-accent-fg transition-colors hover:bg-accent-hover disabled:opacity-50"
           >
             {t("common.add")}
