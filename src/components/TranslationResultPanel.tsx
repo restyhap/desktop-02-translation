@@ -17,13 +17,15 @@ interface ResultPanelProps {
   error: string | null;
   loading: boolean;
   currentEngine: TranslationEngine;
+  /** 收藏：交由宿主打开「收藏入生词本」弹窗（含分组选择） */
+  onFavorite?: (result: TranslationResult) => void;
 }
 
 const fmtTime = (ts: number) =>
   new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 export function TranslationResultPanel({
-  result, error, loading, currentEngine,
+  result, error, loading, currentEngine, onFavorite,
 }: ResultPanelProps) {
   const { t } = useAppLocale();
   const [copied, setCopied] = useState(false);
@@ -93,6 +95,7 @@ export function TranslationResultPanel({
           </button>
           <TTSButton text={result.translatedText} lang={result.targetLang} />
           <button
+            onClick={() => result && onFavorite?.(result)}
             title={result.favorite ? t("action.favorited") : t("action.favorite")}
             className={`grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-hover ${
               result.favorite ? "text-gold" : "text-ink-3 hover:text-gold"

@@ -86,6 +86,19 @@ export async function addVocabularyGroup(name: string, color: string): Promise<s
   return invoke<string>("add_vocabulary_group_cmd", { name, color });
 }
 
+/** 确保存在「默认分组」（收藏兜底组）：无任何分组时自动创建，返回当前分组列表 */
+export async function ensureDefaultGroup(defaultName: string): Promise<void> {
+  const groups = await getVocabularyGroups();
+  if (groups.length === 0) {
+    await addVocabularyGroup(defaultName, GROUP_COLORS_DEFAULT[0]);
+  } else if (!groups.some((g) => g.name === defaultName)) {
+    // 已有分组但无默认组：仍补一个默认组（收藏总兜底）
+    await addVocabularyGroup(defaultName, GROUP_COLORS_DEFAULT[0]);
+  }
+}
+
+const GROUP_COLORS_DEFAULT = ["#2563eb"];
+
 export async function deleteVocabularyGroup(id: string): Promise<void> {
   await invoke("delete_vocabulary_group_cmd", { id });
 }

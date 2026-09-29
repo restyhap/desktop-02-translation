@@ -17,6 +17,8 @@ import { PageHeader } from "@/components/PageHeader";
 interface HistoryPanelProps {
   /** 点击条目回填主输入区（对齐 App.handleHistorySelect） */
   onSelect: (record: TranslationResult) => void;
+  /** 收藏星：交由宿主打开「收藏入生词本」弹窗（含分组选择） */
+  onStar?: (record: TranslationResult) => void;
 }
 
 /** 按日分组标签：今天 / 昨天 / 本地化短日期（Intl 按 UI 语言输出） */
@@ -31,7 +33,7 @@ function dayLabel(ts: number, localeTag: string, t: TFn): string {
   return new Intl.DateTimeFormat(localeTag, { month: "short", day: "numeric" }).format(d);
 }
 
-export function HistoryPanel({ onSelect }: HistoryPanelProps) {
+export function HistoryPanel({ onSelect, onStar }: HistoryPanelProps) {
   const { t, locale } = useAppLocale();
   const localeTag = UI_LOCALE_TAGS[locale];
   const [records, setRecords] = useState<TranslationResult[]>([]);
@@ -80,17 +82,7 @@ export function HistoryPanel({ onSelect }: HistoryPanelProps) {
     }));
   }, [filtered, localeTag, t]);
 
-  const toggleFav = (id: string) => {
-    const flip = (list: TranslationResult[]) =>
-      list.map((r) => (r.id === id ? { ...r, favorite: !r.favorite } : r));
-    store
-      .toggleFavorite(id)
-      .then(() => setRecords(flip))
-      .catch((err: unknown) => {
-        console.error("[HistoryPanel] 切换收藏失败:", err);
-        setRecords(flip); // 本地先行回正，避免界面与库长期漂移（失败态下次刷新收敛）
-      });
-  };
+  /** 收藏星改走 App 弹窗链路（入生词本+选分组），favorite 仅作视觉标记保留 */
 
   const remove = (id: string) => {
     store
@@ -201,18 +193,18 @@ export function HistoryPanel({ onSelect }: HistoryPanelProps) {
                           minute: "2-digit",
                         })}
                       </span>
-                      {/* hover 才出现的操作（tabIndex=0 保证键盘可达） */}
+                      {/* hover 才出现的操作（tabIndex=0 保证键盘可达）；收藏星=入生词本（分组可选） */}
                       <span
                         role="button"
                         tabIndex={0}
                         onClick={(e) => {
                           e.stopPropagation();
-                          toggleFav(r.id);
+                          onStar?.(r);
                         }}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.stopPropagation();
-                            toggleFav(r.id);
+                            onStar?.(r);
                           }
                         }}
                         title={r.favorite ? t("action.unfavorite") : t("action.favorite")}

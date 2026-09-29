@@ -23,6 +23,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { LanguagesIcon } from "@/components/icons";
 import { TranslationInput, type EngineChip } from "@/components/TranslationInput";
 import { TranslationResultPanel } from "@/components/TranslationResultPanel";
+import { SaveToVocabDialog } from "@/components/SaveToVocabDialog";
 import { RecentStrip } from "@/components/RecentStrip";
 import { TranslateChipsRow } from "@/components/TranslateChipsRow";
 import { HistoryPanel } from "@/pages/HistoryPanel";
@@ -85,6 +86,10 @@ function App() {
 
   /* ---------- 数据库初始化（对齐 src 启动流程，语义零改动） ---------- */
   const [dbError, setDbError] = useState<string | null>(null);
+  /** 收藏入生词本弹窗草稿（原文+译文），非空时渲染 SaveToVocabDialog */
+  const [favDraft, setFavDraft] = useState<{ text: string; translation: string } | null>(
+    null,
+  );
   useEffect(() => {
     let cancelled = false;
 
@@ -353,6 +358,9 @@ function App() {
                     result={translationResult}
                     error={translationError}
                     loading={translationLoading}
+                    onFavorite={(r) =>
+                      setFavDraft({ text: r.sourceText, translation: r.translatedText })
+                    }
                     currentEngine={currentEngine}
                   />
                 </div>
@@ -367,7 +375,13 @@ function App() {
             )}
 
             {sidebarTab === "history" && (
-              <HistoryPanel key={`hist-${historyVersion}`} onSelect={handleHistorySelect} />
+              <HistoryPanel
+                key={`hist-${historyVersion}`}
+                onSelect={handleHistorySelect}
+                onStar={(r) =>
+                  setFavDraft({ text: r.sourceText, translation: r.translatedText })
+                }
+              />
             )}
 
             {sidebarTab === "vocabulary" && (
@@ -417,6 +431,15 @@ function App() {
             <span>{t("footer.notice")}</span>
           </footer>
         </div>
+      )}
+
+      {/* 收藏入生词本弹窗（详情展开 + 分组选择） */}
+      {favDraft && (
+        <SaveToVocabDialog
+          text={favDraft.text}
+          translation={favDraft.translation}
+          onClose={() => setFavDraft(null)}
+        />
       )}
     </div>
   );

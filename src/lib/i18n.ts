@@ -72,6 +72,11 @@ export const UI_LOCALE_TAGS: Record<UiLocale, string> = {
 const zh = {
   /* 通用 */
   "common.followSystem": "跟随系统",
+  "common.loading": "加载中…",
+  "vocab.defaultGroup": "默认分组",
+  "vocab.saveTitle": "收藏入生词本",
+  "vocab.pickGroup": "选择分组",
+  "vocab.saveTo": "保存到生词本",
   "common.close": "关闭",
   "common.cancel": "取消",
   "common.delete": "删除",
@@ -324,6 +329,11 @@ export type TFn = (key: DictKey, vars?: TmplVars) => string;
 
 const en: Dict = {
   "common.followSystem": "Follow system",
+  "common.loading": "Loading…",
+  "vocab.defaultGroup": "Default",
+  "vocab.saveTitle": "Save to vocabulary",
+  "vocab.pickGroup": "Pick a group",
+  "vocab.saveTo": "Save",
   "common.close": "Close",
   "common.cancel": "Cancel",
   "common.delete": "Delete",
@@ -533,6 +543,11 @@ const en: Dict = {
 
 const de: Dict = {
   "common.followSystem": "System folgen",
+  "common.loading": "Lädt…",
+  "vocab.defaultGroup": "Standardgruppe",
+  "vocab.saveTitle": "In Wortschatz speichern",
+  "vocab.pickGroup": "Gruppe wählen",
+  "vocab.saveTo": "Speichern",
   "common.close": "Schließen",
   "common.cancel": "Abbrechen",
   "common.delete": "Löschen",
@@ -745,6 +760,11 @@ const de: Dict = {
 
 const fr: Dict = {
   "common.followSystem": "Suivre le système",
+  "common.loading": "Chargement…",
+  "vocab.defaultGroup": "Groupe par défaut",
+  "vocab.saveTitle": "Enregistrer dans le vocabulaire",
+  "vocab.pickGroup": "Choisir un groupe",
+  "vocab.saveTo": "Enregistrer",
   "common.close": "Fermer",
   "common.cancel": "Annuler",
   "common.delete": "Supprimer",
@@ -959,6 +979,11 @@ const fr: Dict = {
 
 const es: Dict = {
   "common.followSystem": "Según el sistema",
+  "common.loading": "Cargando…",
+  "vocab.defaultGroup": "Grupo predeterminado",
+  "vocab.saveTitle": "Guardar en el vocabulario",
+  "vocab.pickGroup": "Elegir grupo",
+  "vocab.saveTo": "Guardar",
   "common.close": "Cerrar",
   "common.cancel": "Cancelar",
   "common.delete": "Eliminar",
@@ -1171,6 +1196,11 @@ const es: Dict = {
 
 const it: Dict = {
   "common.followSystem": "Segui il sistema",
+  "common.loading": "Caricamento…",
+  "vocab.defaultGroup": "Gruppo predefinito",
+  "vocab.saveTitle": "Salva nel vocabolario",
+  "vocab.pickGroup": "Scegli gruppo",
+  "vocab.saveTo": "Salva",
   "common.close": "Chiudi",
   "common.cancel": "Annulla",
   "common.delete": "Elimina",
@@ -1383,6 +1413,11 @@ const it: Dict = {
 
 const pt: Dict = {
   "common.followSystem": "Seguir o sistema",
+  "common.loading": "Carregando…",
+  "vocab.defaultGroup": "Grupo padrão",
+  "vocab.saveTitle": "Salvar no vocabulário",
+  "vocab.pickGroup": "Escolher grupo",
+  "vocab.saveTo": "Salvar",
   "common.close": "Fechar",
   "common.cancel": "Cancelar",
   "common.delete": "Eliminar",
@@ -1595,6 +1630,11 @@ const pt: Dict = {
 
 const ru: Dict = {
   "common.followSystem": "Как в системе",
+  "common.loading": "Загрузка…",
+  "vocab.defaultGroup": "Группа по умолчанию",
+  "vocab.saveTitle": "В словарь",
+  "vocab.pickGroup": "Выберите группу",
+  "vocab.saveTo": "Сохранить",
   "common.close": "Закрыть",
   "common.cancel": "Отмена",
   "common.delete": "Удалить",
@@ -1807,6 +1847,11 @@ const ru: Dict = {
 
 const ko: Dict = {
   "common.followSystem": "시스템 따르기",
+  "common.loading": "불러오는 중…",
+  "vocab.defaultGroup": "기본 그룹",
+  "vocab.saveTitle": "단어장에 저장",
+  "vocab.pickGroup": "그룹 선택",
+  "vocab.saveTo": "저장",
   "common.close": "닫기",
   "common.cancel": "취소",
   "common.delete": "삭제",
