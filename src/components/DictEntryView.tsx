@@ -52,6 +52,15 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
     setAudioSrc(null);
   }, [entry.word]);
 
+  // 挂载即探测资源清单：决定词头喇叭是否显示（无 audio 资源的词典不再给死按钮）
+  useEffect(() => {
+    let alive = true;
+    dictLoadResources(entry.word)
+      .then((list) => { if (alive) setResources(list); })
+      .catch(() => { if (alive) setResources([]); });
+    return () => { alive = false; };
+  }, [entry.word]);
+
   const loadChip = async () => {
     if (resources) {
       setResources(null);
@@ -135,7 +144,12 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
             </button>
           )}
         </div>
-        <DictBody lines={lines} entryTitle={entry.word_raw || entry.word} onSpeak={speak} />
+        <DictBody
+          lines={lines}
+          entryTitle={entry.word_raw || entry.word}
+          // 探测到 audio 资源才显示词头喇叭，避免无发音词典出现死按钮
+          onSpeak={resources?.some((r) => r.kind === "audio") ? speak : undefined}
+        />
 
         {/* 资源 chips：点击展开懒加载清单 */}
         <div className="flex items-center gap-1.5 border-t border-line px-4 py-2">
