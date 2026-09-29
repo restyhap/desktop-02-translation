@@ -234,6 +234,12 @@ export function VocabularyPanel({ onWordPick }: VocabularyPanelProps) {
               />
             ))}
             <button
+              onClick={() => setShowGroupForm(false)}
+              className="ml-auto h-7 rounded-md border border-line px-3 text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+            >
+              {t("common.cancel")}
+            </button>
+            <button
               onClick={createGroup}
               className="ml-auto h-7 rounded-md bg-accent px-3 text-[11px] text-accent-fg transition-colors hover:bg-accent-hover"
             >
