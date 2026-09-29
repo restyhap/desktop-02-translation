@@ -225,6 +225,8 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
 
 // ================= 5) 非.DOCE5 词典（OALD8 / MW11 / LPron3）hello + 群律/槽位律断言 =================
 {
+  const { extractPhonetic } = await import(new URL("../src/lib/dictPhonetic.ts", import.meta.url).href);
+
   // ---- OALD8 hello：词头 [英][美]（z_hello__gb_1 / z_hello__us_1）、例句行无音 ----
   {
     const e = byDict.get(2);
@@ -235,7 +237,13 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
       `oald8 head=${JSON.stringify(head?.sounds)}`);
     check("oald8.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.OALD8.pronTags),
       `oald8 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
-    // OALD8 词头音标 [həˈləʊ]（方括号型）与 MW11 \…\ 反斜杠型断言：见 phonetic 提取段
+    // OALD8 词头行为 [həˈləʊ]（方括号型，首段=英音）；词形表 [run runs ran running] 含空格须跳过
+    const base = head.html.replace(/<[^>]+>/g, "");
+    const ext = extractPhonetic(base);
+    check("oald8.phonetic", ext?.phonetic === "/həˈləʊ/", `oald8 phonetic=${ext?.phonetic}`);
+    // 反斜杠型直测（MW11 形态）：\hə-ˈlō, he-\
+    const mw = extractPhonetic("\\hə-ˈlō, he-\\ <i>noun</i>");
+    check("phonetic.backslashShape", mw?.phonetic === "/hə-ˈlō, he-/", `backslash=${mw?.phonetic}`);
     // 例句行为 bullet 行（• Hello John…），本词典无例句音数据 → 全条无 exa 文件
     check("oald8.noExa", !lines.some((l) => (l.sounds ?? []).some((f) => /^exa/i.test(f))), "oald8 例句槽泄漏 exa");
     // 例句行（type=example）不得被附加声音（该词典只有词头/词形变体音）
@@ -253,8 +261,12 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
       `mw11 head=${JSON.stringify(head?.sounds)}`);
     check("mw11.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.MW11.pronTags),
       `mw11 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
-    const base = head.html.replace(/<[^>]+>/g, "");
-    // MW11 音标断言见 phonetic 提取段（extractPhonetic）
+    // MW11 音标：\…\ 反斜杠型提取归一为 /…/
+    {
+      const base = head.html.replace(/<[^>]+>/g, "");
+      const ext = extractPhonetic(base);
+      check("mw11.phonetic", ext?.phonetic === "/hə-ˈlō, he-/", `mw11 phonetic=${ext?.phonetic}`);
+    }
     // isExampleSound：MW11 stem 前缀（exacer01/exactl01 等）不得误判为例句音；DOCE5 exa_ 命中
     check("mw11.notExaByPrefix", !isExampleSound("exacer01.wav") && !isExampleSound("exactl01.wav") && isExampleSound("exa_p008-001354151.wav"),
       "isExampleSound 判定与 MW11 stem 前缀冲突");

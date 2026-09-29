@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { DictLine } from "@/lib/parseDefinition";
 import { parseDefinition } from "@/lib/parseDefinition";
 import { soundTag, type PronTag } from "@/lib/dictSounds";
+import { extractPhonetic } from "@/lib/dictPhonetic";
 import { useAppLocale } from "@/lib/i18n";
 import { EmptyState } from "@/components/ui/Misc";
 import { Volume2Icon } from "@/components/icons";
@@ -145,33 +146,27 @@ interface DictBodyProps {
 /** 词典词条正文 */
 export function DictBody({ lines, entryTitle, onSpeakFile }: DictBodyProps) {
   const { t } = useAppLocale();
-// 词头 + 音标分离: 首行 text 若含 "/…/" 则拆出
+// 词头 + 音标分离: 首行 text 若含 "/…/" 则拆出（多词典差异化形态见 dictPhonetic.ts）
 const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() => {
   const first = lines.find((l) => l.type === "text");
   if (!first) return { head: entryTitle, phonetic: null, freq: null, pronVariants: [] as PronVariant[], phoneticTail: null, rest: lines };
+  const pronVariantsOf = (): PronVariant[] =>
+    [...new Set(first.sounds ?? [])].map((f) => ({ file: f, tag: soundTag(f) }));
   // 先在「纯文本拷贝」里找音标，避免被 </b> 等闭合标签里的 "/" 干扰
   const base = first.html.replace(/<[^>]+>/g, "");
-  const m = base.match(/^(.*?)\s*(\/[^/]+\/)\s*([\s\S]*)$/);
-  if (!m) return { head: entryTitle, phonetic: null, freq: null, pronVariants: [] as PronVariant[], phoneticTail: null, rest: lines };
-  // 音标干净化：去掉 Longman 段内控制符 `$`、`he- -ˈloʊ` 类变体拼接留下的"- -"、尾随空逗/空格
-  const pho = m[2]
-    .replace(/\$\s*/g, "")
-    .replace(/-\s+-/g, "-")
-    .replace(/,\s*,/g, ",")
-    .replace(/\s+/g, " ")
-    .trim();
+  const ext = extractPhonetic(base);
+  if (!ext) return { head: entryTitle, phonetic: null, freq: null, pronVariants: pronVariantsOf(), phoneticTail: null, rest: lines };
+  const pho = ext.phonetic;
   // 频率标记（Longman S1/W3 = 口语/书面最常用前 1000/3000 词），音标前小徽章展示
-  const freq = m[1].match(/(?:^|\s)([SW]\d{1,2})$/)?.[1] ?? null;
-  // 变体发音：非 exa 音频资源（attachSounds 已挂到头行），同文件并钮去重
-  const variants: PronVariant[] = [...new Set(first.sounds ?? [])].map((f) => ({ file: f, tag: soundTag(f) }));
+  const freq = ext.head.match(/(?:^|\s)([SW]\d{1,2})$/)?.[1] ?? null;
   // 音标后剩余内容（also hallo…、词性等）不得丢弃 → 作为追加 text 行还给正文；
   // 行首 "BrE AmE" 文本与发音按钮重复，去掉（仅 Longman 音标行尾此形态）
-  const tailHtml = m[3].replace(/^BrE\s+AmE\s*/, "").trim();
+  const tailHtml = ext.tail.replace(/^BrE\s+AmE\s*/, "").trim();
   if (tailHtml) {
     const rest0 = lines.filter((l) => l !== first);
-    return { head: entryTitle, phonetic: pho, freq, pronVariants: variants, phoneticTail: tailHtml, rest: rest0 };
+    return { head: entryTitle, phonetic: pho, freq, pronVariants: pronVariantsOf(), phoneticTail: tailHtml, rest: rest0 };
   }
-  return { head: entryTitle, phonetic: pho, freq, pronVariants: variants, phoneticTail: null, rest: lines.filter((l) => l !== first) };
+  return { head: entryTitle, phonetic: pho, freq, pronVariants: pronVariantsOf(), phoneticTail: null, rest: lines.filter((l) => l !== first) };
 }, [lines, entryTitle]);
 
   if (lines.length === 0) {
