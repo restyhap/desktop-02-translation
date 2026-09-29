@@ -1,171 +1,129 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import { dictSuggest } from "@/storage/dict";
+/**
+ * 一体化翻译卡 — v2 重设计（主页核心卡，职责收敛：纯句子翻译）
+ *
+ * 视觉：bg-elevated 圆角大卡，无内框的大号 textarea，卡内底部同一行 =
+ * 源/目标语言 + 互换 + TTS + 字数 +「翻译」主按钮。
+ * 行为：Enter 恒翻译（单词查询职责移交词典页，主页不做判词分流）。
+ */
+import { useState } from "react";
+import type { Language } from "@/types/translation";
 import { SUPPORTED_LANGUAGES } from "@/types/translation";
+import { useAppLocale } from "@/lib/i18n";
+import { Select } from "@/components/ui/Misc";
 import { TTSButton } from "@/components/TTSButton";
-import type { Language, TranslationEngine } from "@/types/translation";
 
-interface TranslationInputProps {
-  onTranslate?: (text: string, sourceLang: Language, targetLang: Language, engine: TranslationEngine) => void;
-  onDictLookup?: (text: string) => void;
-  defaultText?: string;
-  engine?: TranslationEngine;
-  lang?: string;
-  dictionaryId?: number | null;
-}
-
-/** 引擎芯片（camelCase 出口：TranslateChipsRow / 弹窗共用） */
 export interface EngineChip {
   service: string;
   label: string;
 }
 
-export function TranslationInput({ onTranslate, onDictLookup, defaultText, engine, lang, dictionaryId }: TranslationInputProps) {
-  const [text, setText] = useState(defaultText || "");
-  const [sourceLang, setSourceLang] = useState<Language>("en");
-  const [targetLang, setTargetLang] = useState<Language>("zh");
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const seqRef = useRef(0);
+interface TranslationInputProps {
+  text: string;
+  onTextChange: (text: string) => void;
+  /** 段落翻译（App 内部负责加载/结果/落历史） */
+  onTranslate: (text: string, sourceLang: Language, targetLang: Language) => void;
+  loading: boolean;
+  /** TTS 的源语言（历史回填时 App 更新） */
+  sourceLang: Language;
+  defaultSourceLang?: Language;
+  defaultTargetLang?: Language;
+}
 
-  useEffect(() => {
-    setText(defaultText || "");
-  }, [defaultText]);
+/** 语言互换图标 */
+function SwapIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3 4 7l4 4" />
+      <path d="M4 7h16" />
+      <path d="m16 21 4-4-4-4" />
+      <path d="M20 17H4" />
+    </svg>
+  );
+}
 
-  const handleSuggest = useCallback(async (text: string) => {
-    if (text.trim().length < 1) {
-      setSuggestions([]);
-      setShowSuggestions(false);
-      return;
-    }
-    const seq = ++seqRef.current;
-    try {
-      const result = await dictSuggest(text.trim(), dictionaryId);
-      if (seq === seqRef.current) {
-        setSuggestions(result.words.slice(0, 8));
-        setShowSuggestions(true);
-      }
-    } catch {
-      if (seq === seqRef.current) {
-        setSuggestions([]);
-        setShowSuggestions(false);
-      }
-    }
-  }, [dictionaryId]);
+export function TranslationInput({
+  text, onTextChange, onTranslate,
+  loading, sourceLang,
+  defaultSourceLang = "en", defaultTargetLang = "zh",
+}: TranslationInputProps) {
+  const { t } = useAppLocale();
+  const [sourceLangLocal, setSourceLangLocal] = useState<Language>(defaultSourceLang);
+  const [targetLangLocal, setTargetLangLocal] = useState<Language>(defaultTargetLang);
 
-  const debounceRef = useRef<number>(0);
-  const handleTextChange = (value: string) => {
-    setText(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = window.setTimeout(() => handleSuggest(value), 200);
+  /** 主页职责收敛：Enter 恒翻译（单词查询走词典页，不在主页分流） */
+  const run = () => {
+    const s = text.trim();
+    if (!s || loading) return;
+    onTranslate(s, sourceLangLocal, targetLangLocal);
   };
 
-  // 词典切换后, 若当前输入是单词则重新查询
-  useEffect(() => {
-    const t = text.trim();
-    if (t && /^[a-zA-Z']+$/.test(t) && t.length <= 32) {
-      onDictLookup?.(t);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dictionaryId]);
-
-  const selectSuggestion = (word: string) => {
-    setText(word);
-    setSuggestions([]);
-    setShowSuggestions(false);
-    onDictLookup?.(word);
+  const swap = () => {
+    const prev = sourceLangLocal;
+    setSourceLangLocal(targetLangLocal);
+    setTargetLangLocal(prev);
   };
 
-  const handleTranslate = () => {
-    if (text.trim() && engine) {
-      onTranslate?.(text.trim(), sourceLang, targetLang, engine);
-    }
-  };
-
-  const handleSwapLanguages = () => {
-    setSourceLang(targetLang);
-    setTargetLang(sourceLang);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key !== "Enter") return;
-    const t = text.trim();
-    if (!t) return;
-    e.preventDefault();
-    const isWord = t.length <= 32 && /^[a-zA-Z']+$/.test(t);
-    if (isWord && onDictLookup) {
-      onDictLookup(t);
-    } else if (!isWord) {
-      handleTranslate();
+  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      run();
     }
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center gap-2 p-3 border-b">
-        <select
-          value={sourceLang}
-          onChange={(e) => setSourceLang(e.target.value as Language)}
-          className="flex-1 px-3 py-2 text-sm border rounded-md"
+    <div className="rise-in rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-card)]">
+      {/* 大号输入区（无内框） */}
+      <textarea
+        value={text}
+        rows={4}
+        onChange={(e) => onTextChange(e.target.value)}
+        onKeyDown={onKey}
+        placeholder={t("input.placeholder")}
+        className="block w-full resize-none bg-transparent px-6 pb-2 pt-5 text-[18px] leading-8 text-ink outline-none placeholder:text-ink-3"
+      />
+
+      {/* 卡内底部同一行：语言对 + 互换 + 主按钮 */}
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-2.5">
+        <Select
+          aria-label={t("input.sourceLang")}
+          value={sourceLangLocal}
+          onChange={(e) => setSourceLangLocal(e.target.value as Language)}
+          className="h-7 border-none bg-transparent pr-6 text-xs text-ink-2 hover:bg-hover"
         >
-          {SUPPORTED_LANGUAGES.map((lang) => (
-            <option key={lang.code} value={lang.code}>
-              {lang.name}
-            </option>
+          {SUPPORTED_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.name}</option>
           ))}
-        </select>
+        </Select>
         <button
-          onClick={handleSwapLanguages}
-          className="p-2 hover:bg-muted rounded-md transition-colors"
-          title="交换语言"
+          onClick={swap}
+          title={t("input.swap")}
+          className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
         >
-          ⇄
+          <SwapIcon />
         </button>
-        <select
-          value={targetLang}
-          onChange={(e) => setTargetLang(e.target.value as Language)}
-          className="flex-1 px-3 py-2 text-sm border rounded-md"
+        <Select
+          aria-label={t("input.targetLang")}
+          value={targetLangLocal}
+          onChange={(e) => setTargetLangLocal(e.target.value as Language)}
+          className="h-7 border-none bg-transparent pr-6 text-xs text-ink-2 hover:bg-hover"
         >
-          {SUPPORTED_LANGUAGES.map((lang) => (
-            <option key={lang.code} value={lang.code}>
-              {lang.name}
-            </option>
+          {SUPPORTED_LANGUAGES.map((l) => (
+            <option key={l.code} value={l.code}>{l.name}</option>
           ))}
-        </select>
-      </div>
+        </Select>
 
-      <div className="flex-1 p-3 relative">
-        <textarea
-          value={text}
-          onChange={(e) => handleTextChange(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="输入单词查词典，或输入段落翻译..."
-          className="w-full h-full resize-none p-3 text-sm border rounded-md focus:outline-none focus:ring-2 focus:ring-ring"
-        />
-        {showSuggestions && suggestions.length > 0 && (
-          <ul className="absolute z-20 w-full bg-white border rounded-md shadow-lg mt-1 max-h-48 overflow-auto">
-            {suggestions.map((word) => (
-              <li
-                key={word}
-                onClick={() => selectSuggestion(word)}
-                className="px-3 py-2 hover:bg-primary/10 cursor-pointer text-sm transition-colors"
-              >
-                {word}
-              </li>
-            ))}
-          </ul>
-        )}
-        <div className="absolute bottom-4 left-4">
-          <TTSButton text={text} lang={lang} />
-        </div>
-      </div>
+        <TTSButton text={text} lang={sourceLang} />
 
-      <div className="p-3 border-t">
+        <span className="ml-auto text-[11px] text-ink-3">
+          {t("input.charCount", { count: text.length })}
+        </span>
         <button
-          onClick={handleTranslate}
-          disabled={!text.trim() || !engine}
-          className="w-full px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          onClick={run}
+          disabled={!text.trim() || loading}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-accent px-4 text-xs font-medium text-accent-fg shadow-sm transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
         >
-          翻译
+          {loading ? t("common.translating") : t("common.translate")}
+          <kbd className="hidden rounded border border-white/25 px-1 text-[10px] font-normal sm:inline">↵</kbd>
         </button>
       </div>
     </div>

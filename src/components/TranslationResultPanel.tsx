@@ -1,136 +1,106 @@
-import { useState, useEffect } from "react";
-import type { TranslationResult } from "@/types/translation";
-import { listApiKeys, type ApiKeyOption } from "@/storage";
+/**
+ * 翻译结果「回信卡」 — v2 重设计
+ *
+ * 主页职责唯一：此组件只渲染句子翻译（空白态 / 加载态 / 错误态 / 回信卡），
+ * 词条卡由词典页承担；引擎切换由 TranslateChipsRow 独立一档承载。
+ */
+import { useEffect, useState } from "react";
+import type { TranslationEngine, TranslationResult } from "@/types/translation";
+import { useAppLocale } from "@/lib/i18n";
+import { CopyIcon, StarIcon, BookIcon } from "@/components/icons";
+import { EmptyState } from "@/components/ui/Misc";
 import { TTSButton } from "@/components/TTSButton";
-import { DictEntryView, type DictEntry } from "@/components/DictEntryView";
 
-interface TranslationResultProps {
+interface ResultPanelProps {
   result: TranslationResult | null;
-  loading?: boolean;
-  error?: string | null;
-  currentEngine?: string;
-  onEngineChange?: (engine: string) => void;
-  dictEntry?: DictEntry | null;
-  dictLoading?: boolean;
-  dictError?: string | null;
+  /** 附带错误信息（翻译失败占位状态） */
+  error: string | null;
+  loading: boolean;
+  currentEngine: TranslationEngine;
 }
 
-export function TranslationResultPanel({ result, loading = false, error = null, currentEngine, onEngineChange, dictEntry = null, dictLoading = false, dictError = null }: TranslationResultProps) {
-  const [engines, setEngines] = useState<ApiKeyOption[]>([]);
-  const [engineLoading, setEngineLoading] = useState(true);
+const fmtTime = (ts: number) =>
+  new Date(ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+export function TranslationResultPanel({
+  result, error, loading, currentEngine,
+}: ResultPanelProps) {
+  const { t } = useAppLocale();
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    listApiKeys().then(keys => {
-      setEngines(keys);
-      if (keys.length > 0 && !currentEngine) {
-        onEngineChange?.(keys[0].service_name);
-      }
-      setEngineLoading(false);
-    }).catch(() => {
-      setEngines([]);
-      setEngineLoading(false);
-    });
-  }, []);
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 1200);
+    return () => clearTimeout(timer);
+  }, [copied]);
 
-  if (engineLoading) {
+  /* ---------- 加载态 ---------- */
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-        加载中...
+      <div className="flex min-h-44 items-center justify-center rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-card)]">
+        <span className="animate-pulse text-sm text-ink-3">{t("common.translating")}</span>
       </div>
     );
   }
 
-  if (engines.length === 0) {
+  /* ---------- 错误 / 空白态 ---------- */
+  if (!result || error) {
     return (
-      <div className="flex flex-col h-full">
-        <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-          暂无翻译服务，请在设置中配置
-        </div>
+      <div className="flex min-h-56 flex-col justify-center rounded-xl border border-dashed border-line">
+        {error ? (
+          <EmptyState title={t("result.failed")} hint={error} />
+        ) : (
+          <EmptyState
+            icon={<BookIcon size={40} />}
+            title={t("result.emptyTitle")}
+            hint={t("result.emptyHint")}
+          />
+        )}
       </div>
     );
   }
 
+  /* ---------- 回信卡 ---------- */
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex border-b px-3">
-        {engines.map((opt) => (
+    <div className="flex flex-col">
+      <div className="rise-in overflow-hidden rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-card)]">
+        {/* 元信息条 */}
+        <div className="flex items-center gap-2 border-b border-line px-5 py-2 text-xs text-ink-3">
+          <span className="font-mono">{result.sourceLang.toUpperCase()}</span>
+          <span>→</span>
+          <span className="font-mono">{result.targetLang.toUpperCase()}</span>
+          <span className="h-3 w-px bg-line" />
+          <span>{result.engine || currentEngine}</span>
+          <span className="ml-auto">{fmtTime(result.timestamp)}</span>
+        </div>
+        {/* 译文大字（衬线 accent） */}
+        <div className="px-6 py-5">
+          <p className="font-display text-[24px] leading-9 text-accent">{result.translatedText}</p>
+        </div>
+        {/* 操作行 */}
+        <div className="flex items-center gap-1 border-t border-line px-4 py-1.5">
           <button
-            key={opt.service_name}
-            onClick={() => onEngineChange?.(opt.service_name)}
-            className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ${
-              currentEngine === opt.service_name
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
+            onClick={() => {
+              navigator.clipboard
+                .writeText(result.translatedText)
+                .then(() => setCopied(true))
+                .catch((err: unknown) => console.error("[ResultPanel] 复制失败:", err));
+            }}
+            title={t("action.copyTranslation")}
+            className="grid h-7 w-7 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
+          >
+            <CopyIcon size={14} />
+          </button>
+          <TTSButton text={result.translatedText} lang={result.targetLang} />
+          <button
+            title={result.favorite ? t("action.favorited") : t("action.favorite")}
+            className={`grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-hover ${
+              result.favorite ? "text-gold" : "text-ink-3 hover:text-gold"
             }`}
           >
-            {opt.display_name}
+            <StarIcon size={14} filled={result.favorite} />
           </button>
-        ))}
-      </div>
-      <div className="flex-1 relative">
-        {dictLoading && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            词典查询中...
-          </div>
-        )}
-        {dictEntry && !dictLoading && (
-          <div className="w-full h-full overflow-y-auto p-3">
-            <DictEntryView entry={dictEntry} />
-          </div>
-        )}
-        {dictError && !dictEntry && !dictLoading && (
-          <div className="flex items-center justify-center h-full p-4">
-            <div className="text-center text-sm text-muted-foreground">{dictError}</div>
-          </div>
-        )}
-        {!dictEntry && !dictError && !dictLoading && (
-          <>
-        {loading && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            <div className="flex flex-col items-center gap-2">
-              <div className="w-6 h-6 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
-              <div>翻译中...</div>
-            </div>
-          </div>
-        )}
-        {error && (
-          <div className="flex items-center justify-center h-full p-4">
-            <div className="text-center text-sm text-destructive">
-              <div className="font-medium mb-1">翻译失败</div>
-              <div className="text-xs text-muted-foreground">{error}</div>
-            </div>
-          </div>
-        )}
-        {!result && !loading && !error && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            输入文本并点击翻译按钮
-          </div>
-        )}
-        {result && (
-          <div className="w-full h-full overflow-y-auto p-3 border rounded-md">
-            <div className="flex items-center gap-2 mb-3">
-              <span className="text-xs px-2 py-1 bg-muted rounded">
-                {result.sourceLang.toUpperCase()}
-              </span>
-              <span className="text-xs text-muted-foreground">→</span>
-              <span className="text-xs px-2 py-1 bg-muted rounded">
-                {result.targetLang.toUpperCase()}
-              </span>
-              <span className="text-xs text-muted-foreground ml-auto">
-                {result.engine}
-              </span>
-            </div>
-            <div className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">翻译</div>
-            <div className="text-sm font-medium leading-relaxed text-primary">
-              {result.translatedText}
-            </div>
-          </div>
-        )}
-        <div className="absolute bottom-4 left-4">
-          <TTSButton text={result?.translatedText || ""} lang={result?.targetLang || ""} />
         </div>
-        </>
-        )}
       </div>
     </div>
   );
