@@ -109,12 +109,14 @@ interface SettingsPanelProps {
   onDictsRebuilt: () => void;
   /** 重建开始/结束回传 App（词典页覆盖 loading 态） */
   onDictsRebuilding?: (v: boolean) => void;
+  /** 翻译服务 增加/删除 后回调（App.loadEngines 刷新主页引擎芯片） */
+  onEnginesChanged?: () => void;
 }
 
 /** 服务行展示形态：listApiKeys 基础字段 + 可选的 Key 信息 */
 type KeyRow = ApiKeyOption & { app_id?: string | null; api_key?: string };
 
-export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onDictsRebuilding }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onDictsRebuilding, onEnginesChanged }: SettingsPanelProps) {
   const { t, choice, setChoice } = useAppLocale();
   const [active, setActive] = useState<string>("general");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -292,7 +294,7 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
         {/* ===== 翻译服务 ===== */}
         <div className="mt-6">
           <Section id="apis" label={t("settings.sectionApis")}>
-            <ApiSection settings={settings} patch={patch} />
+            <ApiSection settings={settings} patch={patch} onEnginesChanged={onEnginesChanged} />
           </Section>
         </div>
 
@@ -554,7 +556,7 @@ class RestrictToParentElement extends Modifier {
 }
 
 /** 翻译服务分节：dnd-kit 拖拽排序（src 版）+ 添加弹窗 + 删除 + 默认引擎 */
-function ApiSection({ settings, patch }: { settings: AppSettings; patch: (fn: (d: AppSettings) => void) => void }) {
+function ApiSection({ settings, patch, onEnginesChanged }: { settings: AppSettings; patch: (fn: (d: AppSettings) => void) => void; onEnginesChanged?: () => void }) {
   const { t } = useAppLocale();
   const { showToast } = useToast();
   const [apiKeys, setApiKeys] = useState<KeyRow[]>([]);
@@ -587,6 +589,7 @@ function ApiSection({ settings, patch }: { settings: AppSettings; patch: (fn: (d
         showToast(t("toast.serviceAdded", { name: input.name.trim() }), "success");
         setShowAdd(false);
         refreshApiKeys();
+        onEnginesChanged?.();
       })
       .catch((err: unknown) => {
         console.error("[Settings] 添加失败:", err);
@@ -600,6 +603,7 @@ function ApiSection({ settings, patch }: { settings: AppSettings; patch: (fn: (d
       .then(() => {
         showToast(t("toast.serviceDeleted"), "success");
         refreshApiKeys();
+        onEnginesChanged?.();
       })
       .catch((err: unknown) => {
         console.error("[Settings] 删除 API Key 失败:", err);

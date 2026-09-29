@@ -201,24 +201,26 @@ function App() {
   const [currentEngine, setCurrentEngine] = useState<string>("");
 
   const [engines, setEngines] = useState<EngineChip[]>([]);
-  useEffect(() => {
-    let alive = true;
+  // 引擎列表可被设置页增/删，抽成可重入的加载函数（挂载加载 + 设置页变更后刷新）
+  const loadEngines = useCallback(() => {
     listApiKeys()
       .then((keys) => {
-        if (alive) setEngines(keys.map((k) => ({ service: k.service_name, label: k.display_name })));
+        setEngines(keys.map((k) => ({ service: k.service_name, label: k.display_name })));
       })
       .catch((err: unknown) => {
         console.error("[App] 引擎列表加载失败:", err);
-        if (alive) setEngines([]);
+        setEngines([]);
       });
-    return () => {
-      alive = false;
-    };
   }, []);
+  useEffect(loadEngines, [loadEngines]);
 
-  // 未选引擎时取默认（keys 非空自动选第一个，对齐 src 语义）
+  // 未选引擎或所选引擎已被删除时重新取默认（keys 非空自动选第一个，对齐 src 语义）
   useEffect(() => {
-    if (!currentEngine && engines.length > 0) {
+    if (engines.length === 0) {
+      if (currentEngine) setCurrentEngine("");
+      return;
+    }
+    if (!currentEngine || !engines.some((e) => e.service === currentEngine)) {
       const def = settings.translation.defaultEngine;
       setCurrentEngine(def && engines.some((e) => e.service === def) ? def : engines[0].service);
     }
@@ -322,6 +324,7 @@ function App() {
             onChange={changeSettings}
             onDictsRebuilt={loadDicts}
             onDictsRebuilding={setDictRebuilding}
+            onEnginesChanged={loadEngines}
           />
         </div>
       ) : (
