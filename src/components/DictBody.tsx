@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import type { DictLine } from "@/lib/parseDefinition";
 import { parseDefinition } from "@/lib/parseDefinition";
-import { soundTag, type PronTag } from "@/lib/dictSounds";
+import { soundTag, pronTagKey, type PronTag } from "@/lib/dictSounds";
 import { extractPhonetic } from "@/lib/dictPhonetic";
 import { useAppLocale } from "@/lib/i18n";
 import { EmptyState } from "@/components/ui/Misc";
@@ -79,21 +79,25 @@ function LineView({ line, onSpeakFile }: { line: DictLine; onSpeakFile?: (filena
   }
 }
 
-/** 行内小喇叭：带 sounds 的行在行尾渲染多个（size 12，hover accent） */
+/** 行内小喇叭：带 sounds 的行在行尾渲染多个（size 12，hover accent）；title=t(tag)·file（规格#2） */
 function SoundBtns({ sounds, onSpeakFile }: { sounds?: string[]; onSpeakFile?: (filename: string) => void }) {
+  const { t } = useAppLocale();
   if (!onSpeakFile || !sounds || sounds.length === 0) return null;
   return (
     <span className="flex shrink-0 items-center gap-0.5">
-      {sounds.map((f) => (
-        <button
-          key={f}
-          onClick={() => onSpeakFile(f)}
-          title={f}
-          className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink-3 transition-colors hover:bg-hover hover:text-accent"
-        >
-          <Volume2Icon size={14} />
-        </button>
-      ))}
+      {sounds.map((f) => {
+        const tag = soundTag(f);
+        return (
+          <button
+            key={f}
+            onClick={() => onSpeakFile(f)}
+            title={tag ? `${t(pronTagKey(tag))} · ${f}` : f}
+            className="grid h-6 w-6 shrink-0 place-items-center rounded text-ink-3 transition-colors hover:bg-hover hover:text-accent"
+          >
+            <Volume2Icon size={14} />
+          </button>
+        );
+      })}
     </span>
   );
 }
@@ -104,7 +108,10 @@ interface PronVariant {
   tag: PronTag;
 }
 
-/** 音标区一排带标注的发音按钮（英/美，无前缀则只显示喇叭）；标注与 title 走 i18n */
+/**
+ * 音标区一排发音按钮（数据驱动：soundTag 输出 (标签, 文件名) 序对 —— 规格#2：
+ * 1 音=1 钮无标签；≥2 音=分组带标签胶囊；title=t(tag)·file，i18n 9 语）。
+ */
 function PronButtons({
   variants,
   onSpeakFile,
@@ -117,16 +124,17 @@ function PronButtons({
   return (
     <span className="flex shrink-0 items-center gap-1">
       {variants.map((v) => {
-        const tagKey = v.tag === "英音" ? "dict.tagBrE" : "dict.tagAmE";
+        const tagKey = v.tag ? pronTagKey(v.tag) : null;
+        const labeled = variants.length >= 2 && tagKey;
         return (
           <button
             key={v.file}
             onClick={() => onSpeakFile(v.file)}
-            title={`${t(tagKey)} · ${v.file}`}
+            title={tagKey ? `${t(tagKey)} · ${v.file}` : v.file}
             className="flex h-7 items-center gap-1 rounded-md bg-accent-soft px-2.5 text-[11px] text-accent transition-colors hover:bg-accent hover:text-accent-fg"
           >
             <Volume2Icon size={13} />
-            {v.tag && <span>{t(tagKey)}</span>}
+            {labeled && tagKey && <span>{t(tagKey)}</span>}
           </button>
         );
       })}
@@ -146,27 +154,24 @@ interface DictBodyProps {
 /** 词典词条正文 */
 export function DictBody({ lines, entryTitle, onSpeakFile }: DictBodyProps) {
   const { t } = useAppLocale();
-// 词头 + 音标分离: 首行 text 若含 "/…/" 则拆出（多词典差异化形态见 dictPhonetic.ts）
+// 词头 + 音标分离: 首行 text 交给唯一提取器 dictPhonetic（strip-tags/净化/variants 全收口）
 const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() => {
   const first = lines.find((l) => l.type === "text");
   if (!first) return { head: entryTitle, phonetic: null, freq: null, pronVariants: [] as PronVariant[], phoneticTail: null, rest: lines };
   const pronVariantsOf = (): PronVariant[] =>
     [...new Set(first.sounds ?? [])].map((f) => ({ file: f, tag: soundTag(f) }));
-  // 先在「纯文本拷贝」里找音标，避免被 </b> 等闭合标签里的 "/" 干扰
-  const base = first.html.replace(/<[^>]+>/g, "");
-  const ext = extractPhonetic(base);
+  const ext = extractPhonetic(first.html);
   if (!ext) return { head: entryTitle, phonetic: null, freq: null, pronVariants: pronVariantsOf(), phoneticTail: null, rest: lines };
-  const pho = ext.phonetic;
   // 频率标记（Longman S1/W3 = 口语/书面最常用前 1000/3000 词），音标前小徽章展示
   const freq = ext.head.match(/(?:^|\s)([SW]\d{1,2})$/)?.[1] ?? null;
   // 音标后剩余内容（also hallo…、词性等）不得丢弃 → 作为追加 text 行还给正文；
-  // 行首 "BrE AmE" 文本与发音按钮重复，去掉（仅 Longman 音标行尾此形态）
-  const tailHtml = ext.tail.replace(/^BrE\s+AmE\s*/, "").trim();
+  // 段首地区标记词（DOCE5 `BrE  AmE` 文件标签）已由提取器抽出，与按钮不再重复
+  const tailHtml = ext.tail.trim();
   if (tailHtml) {
     const rest0 = lines.filter((l) => l !== first);
-    return { head: entryTitle, phonetic: pho, freq, pronVariants: pronVariantsOf(), phoneticTail: tailHtml, rest: rest0 };
+    return { head: entryTitle, phonetic: ext.phonetic, freq, pronVariants: pronVariantsOf(), phoneticTail: tailHtml, rest: rest0 };
   }
-  return { head: entryTitle, phonetic: pho, freq, pronVariants: pronVariantsOf(), phoneticTail: null, rest: lines.filter((l) => l !== first) };
+  return { head: entryTitle, phonetic: ext.phonetic, freq, pronVariants: pronVariantsOf(), phoneticTail: null, rest: lines.filter((l) => l !== first) };
 }, [lines, entryTitle]);
 
   if (lines.length === 0) {
@@ -183,8 +188,25 @@ const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() =>
             {freq}
           </span>
         )}
-        {phonetic && <span className="font-mono text-xs text-ink-3">{phonetic}</span>}
-        {/* 音标区：英/美两枚带标注按钮（从词头行 sounds 派生），点击分别播放 */}
+        {/* 音标区：plain 主体 + BrE/AmE variants（统一结构，标签走 i18n） */}
+        {phonetic && (phonetic.plain || phonetic.brE || phonetic.amE) && (
+          <span className="flex min-w-0 shrink items-baseline gap-2 font-mono text-xs text-ink-3">
+            {phonetic.plain && <span>{phonetic.plain}</span>}
+            {phonetic.brE && (
+              <span>
+                <span className="mr-1 font-sans text-[10px] font-semibold uppercase tracking-wide">{t("dict.tagBrE")}</span>
+                {phonetic.brE}
+              </span>
+            )}
+            {phonetic.amE && (
+              <span>
+                <span className="mr-1 font-sans text-[10px] font-semibold uppercase tracking-wide">{t("dict.tagAmE")}</span>
+                {phonetic.amE}
+              </span>
+            )}
+          </span>
+        )}
+        {/* 音标区：英/美发音按钮（从词头行 sounds 派生，数据驱动标签），点击分别播放 */}
         {onSpeakFile && <PronButtons variants={pronVariants} onSpeakFile={onSpeakFile} />}
       </div>
       <div className="mt-2">

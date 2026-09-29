@@ -44,16 +44,41 @@ export function isExampleSound(filename: string): boolean {
   return /^exa[_-]/i.test(filename);
 }
 
+/**
+ * 发音文件名 → 地区标签映射表（唯一映射处；新增词典形态只在此加行，不改调用点）。
+ * 行为规格（docs/dict-unify.md #2）：soundTag 输出 (标签, 文件名) 序对驱动按钮胶囊，
+ * 1 音=1 钮无标签、≥2 音=分组带标签胶囊（标签显隐由渲染侧按数量决定）。
+ */
+const TAG_RULES: ReadonlyArray<{ rx: RegExp; tag: Exclude<PronTag, null> }> = [
+  // 前缀系：DOCE5/LPron3（bre_/ame_/uk_/us_）及通用 enUK/enUS/brit/amer
+  { rx: /^(bre[_-]|en[_-]?uk|uk[_-]|brit)/, tag: "英音" },
+  { rx: /^(ame[_-]|en[_-]?us|us[_-]|amer)/, tag: "美音" },
+  // 中缀系：OALD8（z_hello__gb_1.wav / z_hello__us_1.wav）
+  { rx: /_(gb|uk)([_\-.]|\d|$)/, tag: "英音" },
+  { rx: /_(us|na)([_\-.]|\d|$)/, tag: "美音" },
+];
+
 /** 发音前缀 → 英/美标注（词头胶囊用；无前缀返回 null 只显喇叭） */
 export function soundTag(file: string): PronTag {
   const f = file.toLowerCase();
-  // 前缀系：DOCE5/LPron3（bre_/ame_/uk_/us_）
-  if (/^(bre[_-]|en[_-]?uk|uk[_-]|brit)/.test(f)) return "英音";
-  if (/^(ame[_-]|en[_-]?us|us[_-]|amer)/.test(f)) return "美音";
-  // 中缀系：OALD8（z_hello__gb_1.wav / z_hello__us_1.wav）
-  if (/_(gb|uk)([_\-.]|\d|$)/.test(f)) return "英音";
-  if (/_(us|na)([_\-.]|\d|$)/.test(f)) return "美音";
+  for (const rule of TAG_RULES) {
+    if (rule.rx.test(f)) return rule.tag;
+  }
   return null;
+}
+
+/** 地区标签 → i18n 键（dict.tagBrE/tagAmE 已配 9 语；title=`t(tag)·file` 用） */
+export function pronTagKey(tag: Exclude<PronTag, null>): "dict.tagBrE" | "dict.tagAmE" {
+  return tag === "英音" ? "dict.tagBrE" : "dict.tagAmE";
+}
+
+/**
+ * 文件名级可播判定（规格 #3 的「无资源」收口点之一）：
+ * .spx = Ogg/Speex 容器，WKWebView 无 Speex 解码器 → 视为无资源：
+ * 喇叭不渲染（可视化降级而非报错）。
+ */
+export function isPlayableSoundFile(filename: string): boolean {
+  return !/\.spx$/i.test(filename);
 }
 
 /**
