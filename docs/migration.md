@@ -78,10 +78,64 @@ role：Tester。验证矩阵：
 
 ## S4 完成定义（DoD）
 
-- [ ] src 视觉与 front-preview 一致（tokens/组件/页面/弹窗/图标/PageHeader）
-- [ ] src 业务逻辑零改动（storage/hooks/listen/init 不动，diff 只允许视觉层）
-- [ ] mock/tauri 混线为零（grep "mock" 在 src 无命中——除注释说明）
-- [ ] i18n 九语可用（设置可见切换），默认 zh
-- [ ] tsc 0 错误 + pnpm build 通过 + smoke 截图
-- [ ] 每阶段有 commit；最终报告含映射表核对结果与遗留清单
+- [x] src 视觉与 front-preview 一致（tokens/组件/页面/弹窗/图标/PageHeader）
+- [x] src 业务逻辑零改动（storage/hooks/listen/init 不动，diff 只允许视觉层）
+- [x] mock/tauri 混线为零（grep "mock" 在 src 无命中——除注释说明）
+- [x] i18n 九语可用（设置可见切换），默认 zh
+- [x] tsc 0 错误 + pnpm build 通过 + smoke 截图
+- [x] 每阶段有 commit；最终报告含映射表核对结果与遗留清单
+
+---
+
+## 附录：迁移映射表（实施后核对版，2026-09-29）
+
+### A. 组件映射表（preview → src 目标文件）
+
+| preview 文件 | src 目标 | 处理 | 实测差异点（以代码为准） |
+|---|---|---|---|
+| src/styles.css | src/styles.css | 整版替换 | 追加旧 shadcn 语义 token 的 @theme 别名段（兼容层，增量保留） |
+| src/lib/i18n.ts | src/lib/i18n.ts 整版迁入 | 新增 | 剔除 footer.popupPreview*/mock.previewTag 九语词条；footer.notice/app.docTitle 改正式文案；保留 tr/getUiLocale（无 mock import，注释注明出处） |
+| src/components/icons.tsx | 整版迁入 | 新增 | 与 preview 完全一致 |
+| src/hooks/useTheme.ts | 整版迁入 | 新增 | import 改自 @/types/settings（同形状） |
+| src/components/ui/Button.tsx | 替换为 preview 版 | 重写 | 无消费者旧版直接替换；src 旧 4 变体 API 无引用方（grep 证实） |
+| src/components/ui/Input.tsx | 替换（含 Textarea 同文件） | 重写 | 旧 ui/Textarea.tsx/ui/Select.tsx/ui/Badge.tsx/ui/Card.tsx 删除（零引用方） |
+| src/components/ui/Misc.tsx | 新增（Select/Badge/EmptyState） | 新增 | 旧 ui/Select 的 options-prop API 无引用方，直接以 preview 口径为准 |
+| src/components/ui/Toast.tsx | 替换 | 重写 | 保留 showToast(message, type) 形状（调用点 ApiKeySection/DictionarySection 已并入新 SettingsPanel）；多 Toast 队列 + 状态色条 |
+| src/components/PageHeader.tsx | 整版迁入 | 新增 | 一致 |
+| src/components/TranslateChipsRow.tsx | 整版迁入 | 新增 | 仅引擎芯片；数据源 App.listApiKeys→EngineChip{service,label}（camelCase 边界映射） |
+| src/components/RecentStrip.tsx | 迁入 | 新增 | 数据类型改为 UI 形态 TranslationResult（mapRecordToUi 后），字段 sourceText/translatedText；视觉与 preview 一致 |
+| src/components/TTSButton.tsx | 替换为 preview 版 | 重写 | 视觉缩到 h-7 胶囊；src 版 h-10 圆形废弃 |
+| src/components/DictBody.tsx | 整版迁入 | 新增 | DictLine 改从 src/lib/parseDefinition 导入（src 文件 + 既有测试保留） |
+| src/components/DictEntryView.tsx | 重写 | 替换 | 视觉 preview；资源 API 换 src dictLoadResources/dictGetResource（zip_file/mime/data_base64）；DictEntry 本地接口保留（+dictionary_name 可选）；onClose 可选 |
+| src/components/ShortcutRecorder.tsx | 重写 | 替换 | 交互 = src 版（e.key 解析/序列窗/disabled 保护）；视觉 = preview（h-8 min-w-32 + kbd chips + i18n title） |
+| src/components/Sidebar.tsx | 整版迁入 | 新增 | 语言图标替代 src 版 logo + emoji 导航 |
+| src/components/TranslationInput.tsx | 重写 | 替换 | 一体化卡；去掉 src 版联想/词典芯片/判词分流（职责移交词典页）；EngineChip 导出保留 |
+| src/components/TranslationResultPanel.tsx | 重写 | 替换 | 回信卡；引擎切换移交 TranslateChipsRow；收藏星为静态视觉（与 preview 相同） |
+| src/components/TranslatePopup.tsx(root) | 重写 | 替换 | 事件源 = getCurrentWindow().listen("show-translate")；拖拽 + 8 向 resize 热区保留 src 原生窗口能力；预览 overlay（App 内弹窗）未迁（src 为独立窗口） |
+| src/pages/HistoryPanel.tsx | 迁入 | 新增 | 数据 store.getTranslations+mapRecordToUi；toggleFavorite 返回 void → 本地翻转；key={historyVersion} 保留 |
+| src/pages/VocabularyPanel.tsx | 迁入 | 新增 | Store 六命令 async；toast 全 i18n；颜色调色板对齐 |
+| src/pages/DictionaryPanel.tsx | 迁入 | 新增 | DictInfo 复用 @/storage/dict；进度条：src 全库构建无进度回传 → 不确定态脉冲条（标签沿用 i18n 文案） |
+| src/pages/SettingsPanel.tsx | 重写 | 替换 | preview 双栏（w-44 rail + 右列滚动 + 锚点跳转）；业务全 src：dnd-kit react（非 preview 的 @dnd-kit/core，依赖表没有）+ RestrictToParentElement、AddKeyModal（名称/ID/Key/URL/默认引擎 Switch）、字典目录 plugin-dialog、快捷键 getShortcuts/updateShortcuts + disabled、check_update 按钮（原 src UpdateButton 内联收编） |
+| src/components/DictChipsBar.tsx(preview) | 未迁 | — | preview 自身未接线（主页不混词典芯片），src 亦无 enabledDicts 状态机；遗留清单注明 |
+| src/components/HistoryList.tsx 等旧组件 | 删除 | — | git rm：HistoryList/settings/*(6)/UpdateButton/VocabularyPanel/DictionaryPanel/SettingsPanel 旧版 |
+
+### B. 数据源映射表（preview mock → src storage）
+
+| preview 调用（@/mock/store|engine|bus） | src 数据源 | 签名差异 / 处理 |
+|---|---|---|
+| getDbStatus/initDatabase | getDBStatus/initDB（storage/index） | src getDBStatus→boolean（异步就绪轮询）；init 启动流程保留 src listen(__tauri__init)+500ms 重试 |
+| getTranslations | store.getTranslations | src 返回 TranslationRecord(snake) → mapRecordToUi 转 UI 形态（HistoryPanel/RecentStrip 消费 camelCase） |
+| toggleFavorite（返回 0/1） | store.toggleFavorite（void） | 调用后本地翻转状态（失败回正说明见代码注释） |
+| deleteTranslation | store.deleteTranslation | 无差异（async 化） |
+| saveTranslation(mock) | — | UI 不直接落历史；落库在 useTranslationState.translateAndApply（src 原逻辑） |
+| getVocabularyGroups/Words/addGroup/deleteGroup/addWord/deleteWord | store.同名六命令 | mock 同步返回对象；src addVocabularyGroup 返回新 id（Promise<string>），add 后 refetch |
+| listApiKeys | storage.listApiKeys | mock ApiKeyItem{service,display_name,key_tail}；src ApiKeyOption{service_name,display_name}+可选 app_id/api_key；App/popup 处映射为 EngineChip{service,label}（camelCase 纪律） |
+| addApiKey/deleteApiKey/reorderApiKeys/addEngine/deleteEngine/getEngines | storage 同名 | 语义对齐 src ApiKeySection 原交互（含 AddKeyModal） |
+| listDicts/dictHasDb/dictLookup/dictBuild/dictSuggest | storage/dict 同名 | src dictLookup 返回 {found, entry}（mock 返回 entry 直接判空）；dictSuggest 主页不再使用（职责移交词典页）；dictBuild 全库无进度 → buildingId 视觉记账 + 脉冲条 |
+| dictLoadResource/dictGetResource(mock) | dictLoadResources/dictGetResource | src 返回 {mime,data_base64} 由前端拼 dataUrl；kind 为 string（非 mock 的 "audio"\|"image" 字面量），按值比较渲染 🔊/🖼 |
+| getDictPaths/saveDictPaths | storage 同名 | mock「＋选择目录」插假路径 → src plugin-dialog open(directory) |
+| getSettings/saveAllSettings | getSettings/saveSettings | 全量 AppSettings 对象；App 持有 + patch 深拷贝回传；popup 只取 translation.defaultSourceLang/defaultTargetLang 与 appearance.opacity/hideDelay |
+| checkUpdate(mock) | invoke("check_update") | src UpdateButton 业务保留，视觉并入新面板 |
+| mockTranslate/detectLanguage | —（禁止迁） | UI 用 useTranslationState.translateAndApply 落库翻译；检测不迁移（src 无该能力，保持 src 行为） |
+| emitShowTranslate/onShowTranslate（mock/bus） | getCurrentWindow().listen("show-translate") | App 内不挂 bus；弹窗窗口语义为 src 独有（preview 仅红点演示） |
 ```
