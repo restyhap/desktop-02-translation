@@ -1,5 +1,6 @@
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TranslationResult {
@@ -88,6 +89,7 @@ pub async fn translate_with_cache(
         "youdao" => translate_with_youdao(text, source_lang, target_lang, &app_id, &api_key).await,
         "caiyun" => translate_with_caiyun(text, source_lang, target_lang, &api_key).await,
         "ali" => translate_with_alibaba(text, source_lang, target_lang, &api_key, &app_id).await,
+        "volcano" => translate_with_volcano(text, source_lang, target_lang, &app_id, &api_key).await,
         _ => Err(format!("不支持的翻译引擎: {}", engine)),
     }
 }
@@ -456,9 +458,11 @@ pub async fn translate_with_caiyun(
 
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
+use sha2::Sha256;
 use base64::Engine;
 
 type HmacSha1 = Hmac<Sha1>;
+type HmacSha256 = Hmac<Sha256>;
 
 /// 调用阿里翻译 API（HTTP 网关 /api/translate/web/general，ROA 风格签名）
 pub async fn translate_with_alibaba(
@@ -595,5 +599,182 @@ struct AlibabaHttpData {
         source_lang: source_lang.to_string(),
         target_lang: target_lang.to_string(),
         engine: "ali".to_string(),
+    })
+}
+
+// ==================== 火山引擎（Volcano / 火山翻译） ====================
+
+/// 火山引擎通用翻译 V2 响应体
+#[derive(Debug, Deserialize)]
+struct VolcResponse {
+    #[serde(rename = "TranslationList", alias = "translationList")]
+    translation_list: Option<Vec<VolcTranslationItem>>,
+    #[serde(rename = "ResponseMetadata", alias = "responseMetadata")]
+    metadata: Option<VolcMetadata>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolcTranslationItem {
+    #[serde(rename = "Translation", alias = "translation")]
+    translation: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolcMetadata {
+    #[serde(rename = "Error", alias = "error")]
+    error: Option<VolcError>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolcError {
+    #[serde(rename = "Code", alias = "code")]
+    code: Option<String>,
+    #[serde(rename = "Message", alias = "message")]
+    message: Option<String>,
+}
+
+/// 火山引擎机器翻译 API
+///
+/// 通用版 V2（2020-06-01）：请求走 POST JSON（火山 V4 允许 json payload 与
+/// x-content-sha256 头替代 form 归一化），签名 = AWS 风格 HMAC-SHA256。
+/// 需要 AccessKey（app_id 参数位放 AccessKeyId）+ SecretAccessKey。
+pub async fn translate_with_volcano(
+    text: &str,
+    source_lang: &str,
+    target_lang: &str,
+    access_key_id: &str,
+    secret_access_key: &str,
+) -> Result<TranslationResult, String> {
+    use sha2::Digest;
+    const ENDPOINT: &str = "https://translate.volcengineapi.com";
+    const PATH: &str = "/";
+    const ACTION: &str = "TranslateText";
+    const VERSION: &str = "2020-06-01";
+    const CONTENT_TYPE: &str = "application/json";
+    const REGION: &str = "cn-north-1";
+    const SERVICE: &str = "translate";
+
+    let body = serde_json::json!({
+        "SourceLanguage": source_lang,
+        "TargetLanguage": target_lang,
+        "Text": text,
+    })
+    .to_string();
+
+    // 火山 V4 签名要素
+    let body_sha256 = {
+        let mut hasher = Sha256::new();
+        hasher.update(body.as_bytes());
+        hex::encode(hasher.finalize())
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| format!("系统时间错误: {}", e))?;
+    let timestamp = now.as_secs();
+    let date = chrono::DateTime::from_timestamp(timestamp as i64, 0)
+        .ok_or("时间戳转换失败")?
+        .format("%Y%m%dT%H%M%SZ")
+        .to_string();
+    let short_date = &date[..8];
+    let nonce = uuid::Uuid::new_v4().to_string();
+
+    // 火山要求参与签名的 header 全部小写排序（不包含 host 与 x-content-sha256 之外的头）
+    let canonical_headers = "content-type:application/json\nhost:translate.volcengineapi.com\nx-content-sha256:".to_string() + &body_sha256 + "\n";
+    let signed_headers = "content-type;host;x-content-sha256";
+
+    // 火山 json 请求体直接作为 TranslationList 数组以外的原始 payload 拼接：
+    // TranslateText 的正式 body 是 {"Text":..., ...}；V2 允许透传该 json
+    let query = format!(
+        "Action={}&Version={}",
+        urlencoding::encode(ACTION),
+        urlencoding::encode(VERSION)
+    );
+
+    // 1) CanonicalRequest
+    let canonical_request = format!(
+        "POST\n{path}\n{query}\n{headers}\n{signed}\n{payload}",
+        path = PATH,
+        query = query,
+        headers = canonical_headers,
+        signed = signed_headers,
+        payload = body_sha256,
+    );
+
+    // 2) StringToSign
+    let cred_scope = format!("{}/{}/{}/request", short_date, REGION, SERVICE);
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_request.as_bytes());
+    let canonical_digest = hex::encode(hasher.finalize());
+    let string_to_sign = format!(
+        "HMAC-SHA256\n{}\n{}",
+        cred_scope, canonical_digest
+    );
+
+    // 3) 派生签名密钥：kSecret → kDate → kRegion → kService → kSigning
+    let mut mac = HmacSha256::new_from_slice(secret_access_key.as_bytes())
+        .map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(short_date.as_bytes());
+    let k_date = mac.finalize().into_bytes();
+    let mut mac = HmacSha256::new_from_slice(&k_date).map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(REGION.as_bytes());
+    let k_region = mac.finalize().into_bytes();
+    let mut mac = HmacSha256::new_from_slice(&k_region).map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(SERVICE.as_bytes());
+    let k_service = mac.finalize().into_bytes();
+    let mut mac = HmacSha256::new_from_slice(&k_service).map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(b"request");
+    let k_signing = mac.finalize().into_bytes();
+    let mut mac = HmacSha256::new_from_slice(&k_signing).map_err(|e| format!("签名失败: {}", e))?;
+    mac.update(string_to_sign.as_bytes());
+    let signature = hex::encode(mac.finalize().into_bytes());
+
+    let authorization = format!(
+        "HMAC-SHA256 Credential={}/{}, SignedHeaders={}, Signature={}",
+        access_key_id, cred_scope, signed_headers, signature
+    );
+
+    let url = format!("{}{}?{}", ENDPOINT, PATH, query);
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Content-Type", CONTENT_TYPE)
+        .header("X-Content-Sha256", &body_sha256)
+        .header("X-Date", &date)
+        .header("X-Request-Id", &nonce)
+        .header("Authorization", &authorization)
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| format!("HTTP 请求失败: {}", e))?;
+
+    let status = response.status();
+    let body_text = response.text().await.unwrap_or_default();
+
+    let parsed: VolcResponse = serde_json::from_str(&body_text)
+        .map_err(|e| format!("解析响应失败: {} - 原始响应: {}", e, body_text))?;
+
+    if let Some(err) = parsed.metadata.as_ref().and_then(|m| m.error.as_ref()) {
+        return Err(format!(
+            "火山翻译错误: {} - {}",
+            err.code.clone().unwrap_or_else(|| status.to_string()),
+            err.message.clone().unwrap_or_default()
+        ));
+    }
+
+    if !status.is_success() {
+        return Err(format!("火山翻译 API 错误: {}", body_text));
+    }
+
+    let translation_text = parsed
+        .translation_list
+        .and_then(|list| list.into_iter().next())
+        .and_then(|item| item.translation)
+        .ok_or_else(|| format!("火山翻译响应中未找到译文: {}", body_text))?;
+
+    Ok(TranslationResult {
+        text: translation_text,
+        source_lang: source_lang.to_string(),
+        target_lang: target_lang.to_string(),
+        engine: "volcano".to_string(),
     })
 }

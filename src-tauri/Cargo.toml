@@ -42,6 +42,8 @@ tokio = { version = "1", features = ["full"] }
 md-5 = "0.10"
 hmac = "0.12"
 sha1 = "0.10"
+sha2 = "0.10"
+hex = "0.4"
 base64 = "0.21"
 chrono = { version = "0.4", features = ["serde"] }
 urlencoding = "2.1"
