@@ -13,9 +13,11 @@ import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 
 const { parseDefinition } = await import(new URL("../src/lib/parseDefinition.ts", import.meta.url).href);
-const { attachSounds, scopeResources, soundTag, pickHeadAudio, isExampleSound } = await import(
+const { attachSounds, scopeResources, soundTag, pickHeadAudio, isExampleSound, isPlayableSoundFile } = await import(
   new URL("../src/lib/dictSounds.ts", import.meta.url).href
 );
+const { extractPhonetic } = await import(new URL("../src/lib/dictPhonetic.ts", import.meta.url).href);
+const { toPlayableAudioUrl } = await import(new URL("../src/lib/audioUrl.ts", import.meta.url).href);
 
 const DB_PATH =
   process.env.DICT_DB ??
@@ -225,8 +227,6 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
 
 // ================= 5) 非.DOCE5 词典（OALD8 / MW11 / LPron3）hello + 群律/槽位律断言 =================
 {
-  const { extractPhonetic } = await import(new URL("../src/lib/dictPhonetic.ts", import.meta.url).href);
-
   // ---- OALD8 hello：词头 [英][美]（z_hello__gb_1 / z_hello__us_1）、例句行无音 ----
   {
     const e = byDict.get(2);
@@ -237,13 +237,14 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
       `oald8 head=${JSON.stringify(head?.sounds)}`);
     check("oald8.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.OALD8.pronTags),
       `oald8 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
-    // OALD8 词头行为 [həˈləʊ]（方括号型，首段=英音）；词形表 [run runs ran running] 含空格须跳过
-    const base = head.html.replace(/<[^>]+>/g, "");
-    const ext = extractPhonetic(base);
-    check("oald8.phonetic", ext?.phonetic === "/həˈləʊ/", `oald8 phonetic=${ext?.phonetic}`);
+    // OALD8 词头行为 `BrE [həˈləʊ] NAmE [həˈloʊ]`（标记词绑定段 → brE/amE variants）；
+    // 词形表 [run runs ran running] 含空格须跳过（统一化后 plain 置空，由 variants 表达）
+    const ext = extractPhonetic(head.html);
+    check("oald8.phonetic", ext?.phonetic.brE === "/həˈləʊ/" && ext?.phonetic.amE === "/həˈloʊ/",
+      `oald8 phonetic=${JSON.stringify(ext?.phonetic)}`);
     // 反斜杠型直测（MW11 形态）：\hə-ˈlō, he-\
     const mw = extractPhonetic("\\hə-ˈlō, he-\\ <i>noun</i>");
-    check("phonetic.backslashShape", mw?.phonetic === "/hə-ˈlō, he-/", `backslash=${mw?.phonetic}`);
+    check("phonetic.backslashShape", mw?.phonetic.plain === "/hə-ˈlō, he-/", `backslash=${mw?.phonetic?.plain}`);
     // 例句行为 bullet 行（• Hello John…），本词典无例句音数据 → 全条无 exa 文件
     check("oald8.noExa", !lines.some((l) => (l.sounds ?? []).some((f) => /^exa/i.test(f))), "oald8 例句槽泄漏 exa");
     // 例句行（type=example）不得被附加声音（该词典只有词头/词形变体音）
@@ -263,9 +264,8 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
       `mw11 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
     // MW11 音标：\…\ 反斜杠型提取归一为 /…/
     {
-      const base = head.html.replace(/<[^>]+>/g, "");
-      const ext = extractPhonetic(base);
-      check("mw11.phonetic", ext?.phonetic === "/hə-ˈlō, he-/", `mw11 phonetic=${ext?.phonetic}`);
+      const ext = extractPhonetic(head.html);
+      check("mw11.phonetic", ext?.phonetic.plain === "/hə-ˈlō, he-/", `mw11 phonetic=${JSON.stringify(ext?.phonetic)}`);
     }
     // isExampleSound：MW11 stem 前缀（exacer01/exactl01 等）不得误判为例句音；DOCE5 exa_ 命中
     check("mw11.notExaByPrefix", !isExampleSound("exacer01.wav") && !isExampleSound("exactl01.wav") && isExampleSound("exa_p008-001354151.wav"),
@@ -311,6 +311,95 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
         `variants=${variants.length} 有音=${variants.filter((l) => l.sounds?.length).length}`);
     }
   }
+}
+
+// ================= 6) 统一化断言（docs/dict-unify.md 规格#1/#2/#3，2026-09-29）=================
+{
+  // 音标统一结构：4 词典 hello 各 1 条（head/tail 为渲染派生伴随信息）
+  const headLineOf = (dictId) => parseDefinition(byDict.get(dictId).definition).find((l) => l.type === "text");
+
+  // —— DOCE5：单斜杠段 → plain，无 variants；尾段孤立标记词（BrE AmE 文件标签）已抽出 ——
+  {
+    const ext = extractPhonetic(headLineOf(1).html);
+    check("uniform.doce.phonetic",
+      ext?.phonetic.plain === "/həˈləʊ, he-ˈloʊ/" && ext?.phonetic.brE === undefined && ext?.phonetic.amE === undefined,
+      `doce=${JSON.stringify(ext?.phonetic)}`);
+    check("uniform.doce.noMarkerTail", ext != null && !/^\s*(BrE|AmE|NAmE)\b/.test(ext.tail),
+      `doce tail 头部残留标记词: ${ext?.tail.slice(0, 30)}`);
+  }
+
+  // —— OALD8：BrE [..] NAmE [..] → brE/amE variants（plain 置空）；NAmE 段不再泄漏进 tail ——
+  {
+    const ext = extractPhonetic(headLineOf(2).html);
+    check("uniform.oald8.phonetic",
+      ext?.phonetic.plain === "" && ext?.phonetic.brE === "/həˈləʊ/" && ext?.phonetic.amE === "/həˈloʊ/",
+      `oald8=${JSON.stringify(ext?.phonetic)}`);
+    check("uniform.oald8.noMarkerTail", ext != null && !/\b(BrE|NAmE|AmE)\b/.test(ext.tail),
+      `oald8 tail 残留标记词: ${ext?.tail.slice(0, 40)}`);
+  }
+
+  // —— MW11：反斜杠型归一 plain ——
+  {
+    const ext = extractPhonetic(headLineOf(3).html);
+    check("uniform.mw11.phonetic", ext?.phonetic.plain === "/hə-ˈlō, he-/", `mw11=${JSON.stringify(ext?.phonetic)}`);
+  }
+
+  // —— LPron3：无括号型必须出结果；`AmE\` 残段清洗 + 地区段拆分为 variants ——
+  {
+    const ext = extractPhonetic(headLineOf(4).html);
+    check("uniform.lpron3.phonetic",
+      ext?.phonetic.plain === "" && ext?.phonetic.brE === "hə ˈləʊ he-" && ext?.phonetic.amE === "-ˈloʊ",
+      `lpron3=${JSON.stringify(ext?.phonetic)}`);
+    const vals = [ext?.phonetic.plain, ext?.phonetic.brE, ext?.phonetic.amE].filter(Boolean).join("|");
+    check("uniform.lpron3.noResidue", !vals.includes("\\") && !/\b(BrE|AmE|NAmE)\b/.test(vals),
+      `lpron3 残段=${vals}`);
+    // 单段形态（light）：无括号出 plain（LPD 记法原样）
+    const le = db.prepare(`select definition from entries_data where word='light' and dictionary_id=4`).get();
+    const lext = extractPhonetic(parseDefinition(le.definition).find((l) => l.type === "text").html);
+    check("uniform.lpron3.singleSection", lext?.phonetic.plain === "laɪt" && lext?.phonetic.brE === undefined,
+      `light=${JSON.stringify(lext?.phonetic)}`);
+  }
+
+  // —— 按钮数据形状（规格#2）：soundTag (标签,文件名) 序对；渲染律=1音无标签/≥2音标签胶囊 ——
+  for (const [dictId, key, E] of [[1, "doce", EXPECT.DOCE5], [2, "oald8", EXPECT.OALD8], [3, "mw11", EXPECT.MW11], [4, "lpron3", EXPECT.LPron3]]) {
+    const lines = attachSounds(parseDefinition(byDict.get(dictId).definition), resOf(byDict.get(dictId)), E.name);
+    const head = lines.find((l) => l.type === "text");
+    const variants = [...new Set(head?.sounds ?? [])].map((f) => ({ file: f, tag: soundTag(f) }));
+    const shapeOk = variants.every((v) => typeof v.file === "string" && (v.tag === null || v.tag === "英音" || v.tag === "美音"));
+    check(`uniform.${key}.buttonShape`,
+      shapeOk
+        && JSON.stringify(variants.map((v) => v.file)) === JSON.stringify(E.pron)
+        && JSON.stringify(variants.map((v) => v.tag)) === JSON.stringify(E.pronTags),
+      `${key} variants=${JSON.stringify(variants)}`);
+    // 数量律：MW11 单音（无标签单钮）；DOCE5/OALD8/LPron3 双音（英/美分组胶囊）
+    check(`uniform.${key}.buttonCount`, variants.length === E.pron.length, `${key} n=${variants.length}`);
+  }
+
+  // —— 音频容器（规格#3，合成字节直测）：OggS/Speex→null；真 PCM 直过；伪 WAV 重打包 ——
+  const dataUrlOf = (mime, buf) => `data:${mime};base64,${buf.toString("base64")}`;
+  const u32le = (n) => { const b = Buffer.alloc(4); b.writeUInt32LE(n, 0); return b; };
+  const riffWav = (fmtTag, payload) => {
+    const fmt = Buffer.alloc(16);
+    fmt.writeUInt16LE(fmtTag, 0); // 其余 fmt 字段对本嗅探无关
+    const body = Buffer.concat([Buffer.from("WAVEfmt "), u32le(16), fmt, Buffer.from("data"), u32le(payload.length), payload]);
+    return Buffer.concat([Buffer.from("RIFF", "latin1"), u32le(body.length), body]);
+  };
+  const ogg = Buffer.concat([Buffer.from("OggS", "latin1"), Buffer.alloc(28, 0), Buffer.from("Speex   ", "latin1")]);
+  check("uniform.audio.oggSpeex", toPlayableAudioUrl(dataUrlOf("audio/ogg", ogg)) === null, "OggS/Speex 未判为不可播");
+  const pcmUrl = dataUrlOf("audio/x-wav", riffWav(1, Buffer.from("PCMPCMPCM")));
+  check("uniform.audio.pcmWav", toPlayableAudioUrl(pcmUrl) === pcmUrl, "真 PCM WAV 应原样返回");
+  const fakeUrl = dataUrlOf("audio/x-wav", riffWav(0x55, Buffer.from("ID3MP3DATA")));
+  const fakeOut = toPlayableAudioUrl(fakeUrl);
+  check("uniform.audio.fakeWav",
+    typeof fakeOut === "string" && fakeOut.startsWith("data:audio/mpeg;base64,")
+      && Buffer.from(fakeOut.split(",")[1] ?? "", "base64").toString("latin1") === "ID3MP3DATA",
+    `fakeWav out=${String(fakeOut).slice(0, 40)}`);
+  const mp3Url = dataUrlOf("audio/mpeg", Buffer.from("MP3RAW"));
+  check("uniform.audio.plainMp3", toPlayableAudioUrl(mp3Url) === mp3Url, "非容器 data URL 应原样返回");
+
+  // —— 文件名级可播判定：.spx 不可播（喇叭不渲染），wav 正常 ——
+  check("uniform.isPlayable.spx", !isPlayableSoundFile("uk_hello.spx") && isPlayableSoundFile("bre_hello0205.wav"),
+    "spx/wav 可播判定错误");
 }
 
 db.close();

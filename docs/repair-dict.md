@@ -268,4 +268,58 @@ mime 推断 `.wav→audio/x-wav` 与容器适配 OK，Rust 侧（dict.rs）无�
 ## R5 DoD
 
 全部勾选 R4 + tsc/build/smoke + commits 序列 + 本文件 R0 取证段填写完整。
+
+---
+
+# R6 词典共通化统一记录（2026-09-29，规格 docs/dict-unify.md）
+
+> 任务：按 dict-unify.md 将 4 词典（DOCE5/OALD8/MW11/LPron3）的音标渲染/发音按钮/音频容器处理收敛为单一事实源，消除逐词典补丁式特例。
+
+## R6.1 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `src/lib/dictPhonetic.ts` | **重写为统一提取器**：输出统一结构 `{plain, brE?, amE?}`（+head/tail 供 freq 徽章/尾行派生）。四形态按序尝试：`/…/`（DOCE5）→ `标记词[…]`（OALD8 `BrE [x] NAmE [y]`→variants，退化路径保留原「无空格首括号」）→ `\…\`（MW11；内文含标记词=LPron3 残段误配对→拒绝）→ 无括号型（LPron3 **必出结果**）。净化一次收口：strip-tags+空白归一（DSL `\ ` 转义空格=U+00A0→U+0020）、`$`、`/-\s+-/`、残 `\`、语言标记词（BrE/AmE/NAmE）抽出为 variants 不拼 plain、`—` 尾注截断归 tail、LPron3 斜体注释判别（≥3 连 ASCII 字母的 `<i>…</i>`：带 — 为尾注保留原文，行中标签 strong/weak form 置为变体分隔）、段尾 `(i)/(ii)` 族编号清除 |
+| `src/lib/dictSounds.ts` | `soundTag` 表化（TAG_RULES 映射表=唯一映射处，语义不变）；新增 `pronTagKey`（标签→i18n 键收口）与 `isPlayableSoundFile`（`.spx`=Ogg/Speex 不可播） |
+| `src/lib/audioUrl.ts` | **新增**：`toPlayableAudioUrl` 自 DictEntryView 迁出（唯一嗅探处、node 可直跑）；改为按容器字节判定（去掉 mime 门）；补 OggS/Speex 嗅探→返回 null=不可播；空 catch 补 console.error |
+| `src/components/DictBody.tsx` | 渲染接新结构：plain 主体 + BrE/AmE variants 标签展示（i18n）；按钮律=1 音 1 钮无标签、≥2 音分组带标签胶囊；SoundBtns/PronButtons title=`t(tag)·file`；删除本地 `^BrE\s+AmE` 尾清洗（提取器已收口） |
+| `src/components/DictEntryView.tsx` | 用 lib/audioUrl；`toPlayableAudioUrl→null` 时 console.info 静默降级（不报错不播）；scopedResources 叠加 `.spx` 过滤（喇叭不渲染=无资源可视化降级） |
+| `docs/repair-dict-fixture.mjs` | 新增 uniform.* 断言 21 条（音标统一结构 4 词典 + light 单段形态 + 按钮数据形状/数量律 + 合成字节容器直测 + spx 判定）；oald8.phonetic/phonetic.backslashShape/mw11.phonetic 3 条接新结构（语义真值不变）；其余 56 条零退化 |
+
+## R6.2 LPron3 无括号型语法（DSL 原文取证）
+
+```
+[b]word[/b] (<i> strong form</i>)? [p]BrE[/p] [s]uk_…[/s] [p]AmE[/p] [s]us_…[/s]
+  [c]英音段[/c] [变体后缀 he-/ɒ-] ([p]AmE[/p]\ [c]美音段[/c])? (<i>, weak forms</i> PHON…)* (<i> —注释</i> 非斜体尾注)*
+```
+- `\`（`AmE\`）为 DSL 转义空格残迹；`!!`/`§` 为 LPD 自有记号（非语言标记词），保留原文。
+- 库内空白实测：DSL `\ ` 展开为 U+00A0（hello 1 处、aachen 2 处），故提取链先空白归一。
+
+## R6.3 统一化前后行为差异（2400 词条抽样 + hello/light 特征词条实证）
+
+| 词典 | 不变 | 变化 |
+|---|---|---|
+| DOCE5 | 385/600 等值、215 双 null，**零差异**（含 hello `/həˈləʊ, he-ˈloʊ/`、S1 徽章、tail） | 无 |
+| MW11 | 294 等值、306 双 null，**零差异**（hello `\hə-ˈlō, he-\`→`/hə-ˈlō, he-/`） | 无 |
+| OALD8 | 302 等值、250 双 null | hello/run：`NAmE [həˈloʊ]` 不再泄漏为尾行文本→amE variant；48/600 旧 bug 修复（旧代码把词形表 `[coursebook]` 误当音标显示 `/coursebook/`，新代码经标记词绑定段出真音标） |
+| LPron3 | 3 等值、27 双 null（交叉引用/罗马数字多 sense 行，规格排除） | **513/600 由 null→出音标**（规格#1「必须出结果」达成）；57/600 旧残段垃圾修复（如 powys 旧值 `/ -əs AmE/`）；`—` 尾注/strong/weak form 标签不再混入音标；hello={brE:`hə ˈləʊ he-`, amE:`-ˈloʊ`}、light=plain `laɪt` |
+| 全词典 | — | 按钮律：单音钮不再带地区标签（如 DOCE5 仅 bre 音词条）、title=`t(tag)·file`；`.spx` 文件喇叭不渲染；OggS 容器播放静默降级 |
+
+**回归=0**（旧值→新 null 2400 抽样 0 例）；DOCE 已定稿行为全 PASS。
+
+## R6.4 验证
+
+- `pnpm exec tsc --noEmit` → 0 错误（exit 0）
+- `pnpm build` → ✓ built in 1.57s
+- `pnpm test`（vitest）→ 8 passed
+- `node --experimental-strip-types docs/repair-dict-fixture.mjs` → **PASS=77 FAIL=0**（56 原有 + 21 uniform.*）
+- Rust 侧未改动（4 词典 0 个 spx/ogg 资源实测，mime 表 R1 已补 flac/spx 无缺口）
+
+## R6.5 遗留（不掩盖）
+
+1. **LPron3 strong/weak form 标签不展示**：行中斜体标签（`<i>strong form</i>`）置换为变体分隔符，标签文本未进 UI（音标完整：`ðiː, ði, ðə`）。如需保留需词典级锚位精修（把标签绑定到具体音标段）。
+2. **LPD 自有记号 `!!`/`§` 保留原文**（take=`teɪk !!tek`、took=`tʊk § tuːk`）——非语言标记词，语义未确证，不清洗。
+3. **多义项次位音**（OALD8 run 第二行 `BrE [ræn]`、LPron3 罗马 I/II 词条首行）仍不在首行提取范围（规格排除，留待后续）。
+4. **LPron3 ▷ 变体行的 `AmE\` 残段**仅在首行清洗，▷ 行（如 lighted `ˈlaɪt ɪd -əd AmE\ ˈlaɪt̬ əd`）正文残段未处理（行级音标展示属后续任务）。
+5. **多地区段 >2 时只取前两段**（结构槽位仅 brE/amE；实测 OALD8 最多 BrE+NAmE 两段，LPron3 (ii) 发音族第二段丢弃）。
 ```
