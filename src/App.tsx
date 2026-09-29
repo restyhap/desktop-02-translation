@@ -313,6 +313,7 @@ function App() {
             settings={settings}
             onClose={() => setSidebarTab("translate")}
             onChange={changeSettings}
+            onDictsRebuilt={loadDicts}
           />
         </div>
       ) : (

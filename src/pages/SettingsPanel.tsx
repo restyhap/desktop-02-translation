@@ -64,6 +64,7 @@ import {
   listApiKeys,
   reorderApiKeys,
 } from "@/storage";
+import { dictBuild } from "@/storage/dict";
 
 function Section({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
   return (
@@ -104,12 +105,14 @@ interface SettingsPanelProps {
   onClose: () => void;
   /** 单项改动回传 App（App 负责 saveSettings 与主题即时生效） */
   onChange: (settings: AppSettings) => void;
+  /** 路径保存触发全量重建完成后回调（App.loadDicts 刷新词典列表） */
+  onDictsRebuilt: () => void;
 }
 
 /** 服务行展示形态：listApiKeys 基础字段 + 可选的 Key 信息 */
 type KeyRow = ApiKeyOption & { app_id?: string | null; api_key?: string };
 
-export function SettingsPanel({ settings, onClose, onChange }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt }: SettingsPanelProps) {
   const { t, choice, setChoice } = useAppLocale();
   const [active, setActive] = useState<string>("general");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -280,7 +283,7 @@ export function SettingsPanel({ settings, onClose, onChange }: SettingsPanelProp
         {/* ===== 词典目录 ===== */}
         <div className="mt-6">
           <Section id="dict" label={t("settings.sectionDict")}>
-            <DictDirSection />
+            <DictDirSection onDictsRebuilt={onDictsRebuilt} />
           </Section>
         </div>
 
@@ -428,7 +431,7 @@ function UpdateButton() {
 }
 
 /** 词典目录分节（getDictPaths / saveDictPaths / plugin-dialog 选目录） */
-function DictDirSection() {
+function DictDirSection({ onDictsRebuilt }: { onDictsRebuilt: () => void }) {
   const { t } = useAppLocale();
   const { showToast } = useToast();
   const [paths, setPaths] = useState<string[]>([]);
@@ -447,16 +450,26 @@ function DictDirSection() {
     };
   }, []);
 
+  // B 方案：保存路径后自动全量重建（dictbuild 启动清空旧行，删除路径的词典随之消失）
+  const [rebuilding, setRebuilding] = useState(false);
   const save = (next: string[]) => {
+    if (rebuilding) return;
+    setRebuilding(true);
+    showToast(t("toast.dictRebuilding"), "info");
     saveDictPaths(next)
       .then(() => {
         setPaths(next);
-        showToast(t("toast.dictDirSaved"), "success");
+        return dictBuild();
+      })
+      .then(() => {
+        onDictsRebuilt();
+        showToast(t("toast.dictRebuildDone"), "success");
       })
       .catch((err: unknown) => {
-        console.error("[Settings] 保存词典路径失败:", err);
-        showToast(t("result.failed"), "error");
-      });
+        console.error("[Settings] 词典构建失败:", err);
+        showToast(t("toast.dictRebuildFailed"), "error");
+      })
+      .finally(() => setRebuilding(false));
   };
 
   const addPath = () => {
@@ -480,7 +493,8 @@ function DictDirSection() {
         </div>
         <button
           onClick={addPath}
-          className="h-8 rounded-md border border-line px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+          disabled={rebuilding}
+          className="h-8 rounded-md border border-line px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
           {t("settings.addDirBtn")}
         </button>
@@ -492,8 +506,9 @@ function DictDirSection() {
         >
           <span className="min-w-0 flex-1 truncate font-mono text-ink-2">{p}</span>
           <button
+            disabled={rebuilding}
             onClick={() => save(paths.filter((_, j) => j !== i))}
-            className="text-ink-3 transition-colors hover:text-red"
+            className="text-ink-3 transition-colors hover:text-red disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t("common.delete")}
           </button>
