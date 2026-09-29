@@ -77,7 +77,11 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
         const data = await dictGetResource(res.zip_file, res.filename);
         const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
         setLoaded((prev) => [...prev, { key, dataUrl }]);
-        if (res.kind === "audio") setAudioSrc(dataUrl);
+        if (res.kind === "audio") {
+          // 首次提取即自动播放（词头喇叭主链路依赖这里）
+          setAudioSrc(dataUrl);
+          void new Audio(dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+        }
         return;
       } catch (err) {
         console.error("[DictEntryView] 提取词典资源失败:", err);
@@ -92,6 +96,28 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
   };
 
   const images = loaded.filter((l) => l.dataUrl?.startsWith("data:image"));
+
+  /** 词头喇叭：取首个 audio 资源播放（点击资源 chip 的懒加载链路复用） */
+  const speak = async () => {
+    try {
+      const list = await dictLoadResources(entry.word);
+      const audio = list.find((r) => r.kind === "audio");
+      if (!audio) return;
+      const key = `${audio.zip_file}/${audio.filename}`;
+      const known = loaded.find((l) => l.key === key);
+      if (known?.dataUrl) {
+        void new Audio(known.dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+        return;
+      }
+      const data = await dictGetResource(audio.zip_file, audio.filename);
+      const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
+      setLoaded((prev) => [...prev, { key, dataUrl }]);
+      setAudioSrc(dataUrl);
+      void new Audio(dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
+    } catch (err) {
+      console.error("[DictEntryView] 词头播放失败:", err);
+    }
+  };
 
   return (
     <div className="rise-in flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
@@ -109,7 +135,7 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
             </button>
           )}
         </div>
-        <DictBody lines={lines} entryTitle={entry.word_raw || entry.word} />
+        <DictBody lines={lines} entryTitle={entry.word_raw || entry.word} onSpeak={speak} />
 
         {/* 资源 chips：点击展开懒加载清单 */}
         <div className="flex items-center gap-1.5 border-t border-line px-4 py-2">

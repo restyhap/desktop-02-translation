@@ -68,10 +68,12 @@ interface DictBodyProps {
   lines: DictLine[];
   /** 未解析的原始 definition（如词典不可解析时的兜底） */
   entryTitle: string;
+  /** 词头喇叭播放回调（未传则隐藏喇叭按钮，避免死按钮） */
+  onSpeak?: () => void;
 }
 
 /** 词典词条正文 */
-export function DictBody({ lines, entryTitle }: DictBodyProps) {
+export function DictBody({ lines, entryTitle, onSpeak }: DictBodyProps) {
   const { t } = useAppLocale();
   // 词头 + 音标分离: 首行 text 若含 "/…/" 则拆出
   const { head, phonetic, rest } = useMemo(() => {
@@ -96,12 +98,15 @@ export function DictBody({ lines, entryTitle }: DictBodyProps) {
       <div className="flex items-baseline gap-2.5">
         <h2 className="font-display text-2xl font-semibold text-ink">{head}</h2>
         {phonetic && <span className="font-mono text-xs text-ink-3">{phonetic}</span>}
-        <button
-          title={t("tts.speak")}
-          className="ml-auto grid h-7 w-7 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
-        >
-          <Volume2Icon size={14} />
-        </button>
+        {onSpeak && (
+          <button
+            onClick={onSpeak}
+            title={t("tts.speak")}
+            className="ml-auto grid h-7 w-7 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
+          >
+            <Volume2Icon size={14} />
+          </button>
+        )}
       </div>
       <div className="mt-2">
         {rest.map((l, i) => (

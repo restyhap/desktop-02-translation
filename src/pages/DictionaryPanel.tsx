@@ -101,9 +101,9 @@ export function DictionaryPanel({
         hint={t("dict.pageHint")}
       />
 
-      {/* 词典选择 chips + 重建 */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-ink-3">{t("dict.label")}</span>
+      {/* 词典选择 chips + 重建：单行横向滚动，不换行 */}
+      <div className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-bg-inset p-1">
+        <span className="shrink-0 pl-1.5 text-[11px] text-ink-3">{t("dict.label")}</span>
         {dicts.map((d) => {
           const active = d.id === activeDict;
           return (
@@ -111,10 +111,10 @@ export function DictionaryPanel({
               key={d.id}
               onClick={() => onSelect(d.id)}
               title={`${fmtCount(d.entry_count, locale, t)} · ${d.name}`}
-              className={`flex h-7 items-center gap-1.5 rounded-md px-2.5 text-[11px] transition-colors ${
+              className={`flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[11px] transition-colors ${
                 active
                   ? "bg-accent text-accent-fg"
-                  : "border border-line text-ink-2 hover:bg-hover hover:text-ink"
+                  : "text-ink-2 hover:bg-hover hover:text-ink"
               }`}
             >
               <BookIcon size={11} />
