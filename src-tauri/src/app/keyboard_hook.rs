@@ -91,100 +91,121 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                 if !trimmed.starts_with("TRANSLATE") && !trimmed.starts_with("SHOW_MAIN") {
                     continue;
                 }
-                if trimmed == "TRANSLATE" || trimmed.starts_with("TRANSLATE ") {
-                    let text = match app.clipboard().read_text() {
-                        Ok(t) => t.trim().to_string(),
-                        Err(e) => {
-                            eprintln!("[main] clipboard read error: {}", e);
-                            String::new()
+
+                // macOS 的剪贴板/窗口操作必须发生在主线程：
+                // 这里是后台 stdout 读取线程，直接调 clipboard()/window 会静默失效
+                let value = app.clone();
+                let event = trimmed.to_string();
+                let _ = app.run_on_main_thread(move || {
+                    let app = value;
+                    let trimmed = event.as_str();
+                    if trimmed == "TRANSLATE" || trimmed.starts_with("TRANSLATE ") {
+                        // 轮询等剪贴板就绪：Cmd+C 的拷贝是异步落盘的，
+                        // 单次读取会在竞态下拿到空值 → 最多重试 5 次（约 400ms）
+                        let mut text = String::new();
+                        for _ in 0..5 {
+                            match app.clipboard().read_text() {
+                                Ok(t) => {
+                                    let t = t.trim().to_string();
+                                    if !t.is_empty() {
+                                        text = t;
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("[main] clipboard read error: {}", e);
+                                }
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(80));
                         }
-                    };
-                    let (cursor_x, cursor_y) = if trimmed == "TRANSLATE" {
-                        (0.0, 0.0)
-                    } else {
-                        let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
-                        if parts.len() >= 3 {
-                            (
-                                parts[1].trim().parse::<f64>().unwrap_or(0.0),
-                                parts[2].trim().parse::<f64>().unwrap_or(0.0),
-                            )
-                        } else {
+                        let (cursor_x, cursor_y) = if trimmed == "TRANSLATE" {
                             (0.0, 0.0)
+                        } else {
+                            let parts: Vec<&str> = trimmed.splitn(3, ' ').collect();
+                            if parts.len() >= 3 {
+                                (
+                                    parts[1].trim().parse::<f64>().unwrap_or(0.0),
+                                    parts[2].trim().parse::<f64>().unwrap_or(0.0),
+                                )
+                            } else {
+                                (0.0, 0.0)
+                            }
+                        };
+                        let display_text = if text.trim().is_empty() {
+                            let last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+                            last.clone().unwrap_or_default()
+                        } else {
+                            text.clone()
+                        };
+                        if display_text.trim().is_empty() {
+                            eprintln!("[main] 剪切板为空且无历史记录，跳过翻译");
+                            return;
                         }
-                    };
-                    let display_text = if text.trim().is_empty() {
-                        let last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
-                        last.clone().unwrap_or_default()
-                    } else {
-                        text.clone()
-                    };
-                    if display_text.trim().is_empty() {
-                        eprintln!("[main] 剪切板为空且无历史记录，跳过翻译");
-                        continue;
-                    }
-                    eprintln!("[main] display_text len={}", display_text.len());
-                    if !text.trim().is_empty() {
-                        let mut last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
-                        *last = Some(text.clone());
-                    }
-                    if let Some(window) = app.get_webview_window("translate") {
-                        // 光标所在显示器优先（隐藏窗口的 current_monitor 可能停留在旧显示器，
-                        // 造成跨屏时按错误边界钳制 → 弹窗位置偏差的根因）
-                        let monitor = app
-                            .monitor_from_point(cursor_x, cursor_y)
-                            .ok()
-                            .flatten()
-                            .or_else(|| window.current_monitor().ok().flatten());
-                        if let Some(monitor) = monitor {
-                            let scale = monitor.scale_factor();
-                            let monitor_logical_width = monitor.size().width as f64 / scale;
-                            let monitor_logical_height = monitor.size().height as f64 / scale;
-                            let monitor_logical_x = monitor.position().x as f64 / scale;
-                            let monitor_logical_y = monitor.position().y as f64 / scale;
-                            let size = window
-                                .inner_size()
-                                .unwrap_or(tauri::PhysicalSize::new(480, 360));
-                            // 弹窗逻辑尺寸按「光标所在显示器」的 scale 折算，避免跨屏 scale 混算偏差
-                            let popup_logical_width = size.width as f64 / scale;
-                            let popup_logical_height = size.height as f64 / scale;
-                            // 光标右下方留 12px 间距，避免弹窗压住鼠标与原选区
-                            let mut px = cursor_x + 12.0;
-                            let mut py = cursor_y + 12.0;
-                            if px + popup_logical_width > monitor_logical_x + monitor_logical_width
-                            {
-                                px =
-                                    monitor_logical_x + monitor_logical_width - popup_logical_width;
-                            }
-                            if py + popup_logical_height
-                                > monitor_logical_y + monitor_logical_height
-                            {
-                                py = monitor_logical_y + monitor_logical_height
-                                    - popup_logical_height;
-                            }
-                            if px < monitor_logical_x {
-                                px = monitor_logical_x;
-                            }
-                            if py < monitor_logical_y {
-                                py = monitor_logical_y;
-                            }
-                            window
-                                .set_position(LogicalPosition::new(px, py))
-                                .unwrap_or_default();
+                        eprintln!("[main] display_text len={}", display_text.len());
+                        if !text.trim().is_empty() {
+                            let mut last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
+                            *last = Some(text.clone());
                         }
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                        let _ = window.emit(
-                            "show-translate",
-                            serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
-                        );
+                        if let Some(window) = app.get_webview_window("translate") {
+                            // 光标所在显示器优先（隐藏窗口的 current_monitor 可能停留在旧显示器，
+                            // 造成跨屏时按错误边界钳制 → 弹窗位置偏差的根因）
+                            let monitor = app
+                                .monitor_from_point(cursor_x, cursor_y)
+                                .ok()
+                                .flatten()
+                                .or_else(|| window.current_monitor().ok().flatten());
+                            if let Some(monitor) = monitor {
+                                let scale = monitor.scale_factor();
+                                let monitor_logical_width = monitor.size().width as f64 / scale;
+                                let monitor_logical_height = monitor.size().height as f64 / scale;
+                                let monitor_logical_x = monitor.position().x as f64 / scale;
+                                let monitor_logical_y = monitor.position().y as f64 / scale;
+                                let size = window
+                                    .inner_size()
+                                    .unwrap_or(tauri::PhysicalSize::new(480, 360));
+                                // 弹窗逻辑尺寸按「光标所在显示器」的 scale 折算，避免跨屏 scale 混算偏差
+                                let popup_logical_width = size.width as f64 / scale;
+                                let popup_logical_height = size.height as f64 / scale;
+                                // 光标右下方留 12px 间距，避免弹窗压住鼠标与原选区
+                                let mut px = cursor_x + 12.0;
+                                let mut py = cursor_y + 12.0;
+                                if px + popup_logical_width > monitor_logical_x + monitor_logical_width
+                                {
+                                    px =
+                                        monitor_logical_x + monitor_logical_width - popup_logical_width;
+                                }
+                                if py + popup_logical_height
+                                    > monitor_logical_y + monitor_logical_height
+                                {
+                                    py = monitor_logical_y + monitor_logical_height
+                                        - popup_logical_height;
+                                }
+                                if px < monitor_logical_x {
+                                    px = monitor_logical_x;
+                                }
+                                if py < monitor_logical_y {
+                                    py = monitor_logical_y;
+                                }
+                                window
+                                    .set_position(LogicalPosition::new(px, py))
+                                    .unwrap_or_default();
+                            }
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                            let _ = window.emit(
+                                "show-translate",
+                                serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
+                            );
+                        }
+                    } else if trimmed == "SHOW_MAIN" || trimmed.starts_with("SHOW_MAIN ") {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
                     }
-                } else if trimmed == "SHOW_MAIN" || trimmed.starts_with("SHOW_MAIN ") {
-                    if let Some(window) = app.get_webview_window("main") {
-                        let _ = window.unminimize();
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
+                });
+
             }
         });
     } else {
