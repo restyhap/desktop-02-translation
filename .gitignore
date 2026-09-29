@@ -23,3 +23,15 @@ src-tauri/gen/
 pnpm-lock.yaml
 pnpm-workspace.yaml
 screenshots/
+.codex
+.freebuff
+.git
+.kilo
+.loopx
+.openchamber
+.opencode
+.serena
+.sisyphus
+dist
+docs
+scripts
