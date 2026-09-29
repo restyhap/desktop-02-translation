@@ -23,10 +23,12 @@ export interface DictLine {
   html: string;
   /** DSL 段落缩进层级 ([m1]..[m6])；非 DSL 分支不设 */
   level?: number;
-  /** 本行首个声音文件名（DSL [s]xxx.wav[/s]） */
+  /** 本行首个声音文件名（DSL [s]xxx.wav[/s] 或挂载填充） */
   sound?: string;
-  /** 本行全部声音文件名（DSL 单行可能多个 [s]） */
+  /** 本行全部声音文件名 */
   sounds?: string[];
+  /** DOCE5 例句槽：展开 HTML 中 3+ 空格缩进行（音频资源按序挂载位，见 dictSounds.ts） */
+  slot?: boolean;
 }
 
 /** 是否含 DSL 标记（Longman/GoldenDict DSL 原文；含任一即走 DSL 直解分支） */
@@ -181,14 +183,17 @@ export function parseDefinition(html: string): DictLine[] {
   if (DSL_RX.test(html)) return parseDslDefinition(html);
 
   const lines = html
-    .split("<br>")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+    .split(/<br\s*\/?>|\n/i)
+    .map((s) => s)
+    .filter((s) => s.trim().length > 0);
 
   const out: DictLine[] = [];
 
-  for (const raw of lines) {
-    const line = raw;
+  for (const rawLine of lines) {
+    // DOCE5 槽位律：3+ 空格原始缩进 = 例句行（2 空格是 [m2] 释义正文，非音）。
+    // 必须在 trim 前捕获缩进；音频挂载由 dictSounds.attachSounds 按序填充。
+    const isSlot = /^[ \t]{3,}/.test(rawLine);
+    const line = rawLine.trim();
 
     // 词性: <b><i>intransitive verb</i></b> / <b><i>noun</i></b>
     let m = line.match(/^<b><i>((?:transitive |intransitive |also )*.+?)<\/i><\/b>/i);
@@ -215,7 +220,8 @@ export function parseDefinition(html: string): DictLine[] {
     // 编号义项: <b>1.</b> / <b>1</b>. / <b> 2 </b>
     m = line.match(/^<b>\s*(\d{1,3})\.?\s*<\/b>/);
     if (m) {
-      out.push({ type: "sense", label: m[1], html: stripTagPrefix(line, m[0]) });
+      // "<b>1</b>. used…" 的句点在 </b> 外会残留，清掉
+      out.push({ type: "sense", label: m[1], html: stripTagPrefix(line, m[0]).replace(/^\.?\s*/, "") });
       continue;
     }
 
@@ -238,6 +244,12 @@ export function parseDefinition(html: string): DictLine[] {
     // 例句: • 开头 (OALD8 用 •)
     if (/^[•◦●]\s*/.test(line)) {
       out.push({ type: "example", html: line.replace(/^[•◦●]\s*/, "") });
+      continue;
+    }
+
+    // 例句槽: 3+ 空格缩进（DOCE5 展开定义的音频例句，挂载见 dictSounds.attachSounds）
+    if (isSlot) {
+      out.push({ type: "example", html: line, slot: true });
       continue;
     }
 

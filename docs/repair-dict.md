@@ -123,6 +123,47 @@ entry_count>0、audio_ref 正确填充；多词典（ 不同 dict_dir）各自�
 验证：pnpm exec tsc --noEmit 0 + pnpm build 过。
 ```
 
+## R2 修复记录（2026-09-29，执行者：repair 子代理）
+
+### R2.0 关键事实修正（影响实现架构）
+
+- **运行库 definition 已被 expand_tags 剥掉全部 [s] 标签**（R0 已证：[s] 残留 0 行）。
+  R2 卡片设想的「喂 definition 直接解析出逐行 [s]」前提不成立——声音↔行对应只能由
+  **resources 表恢复**。测得两条支撑规律（均有大样本证据，非单例归纳）：
+  1. **resources 自然行序（rowid）== DSL 原文 [s] 文档序**：hello 逐位一致；
+     DOCE5 抽样 290/294 一致（4 失败样本均为跨库同形词配对伪影，见 R2.1 取证脚本输出）。
+  2. **展开 HTML 中「3+ 空格缩进行」= 例句槽**：全库 22957/23022 词条满足
+     「槽数 == exa_* 资源数」（99.7%）；65 例外全为拟声词特例（applause/boo/caw 等，
+     释义行同形缩进）。2 空格缩进是 [m2] 释义正文（非音），3 空格是 [m4]+源缩进例句。
+  - 防护规则：**槽数 ≠ exa 数时整条不挂载**（宁缺勿错，防错位播放）。
+
+### R2.1 对应律取证（脚本 /tmp/verify-slots.mjs 实测输出摘录）
+
+```text
+可比词条=294
+A resources自然序==DSL[s]文档序: 290/294, 失败 4
+B 运行库缩进行逐位==DSL含音缩进行: 285/294, 失败 9
+slot 律副证: DSL缩进行=503, 含[s]=497, 缩进无声=6
+```
+全库槽位律（3+ 空格）：`有缩进行或 exa 资源的词条=23022, 相等=22957, 不等=65`。
+
+### R2.2 改动清单
+
+| 文件 | 改动 |
+|---|---|
+| `src/lib/dictSounds.ts` | **新增**（纯函数零依赖，node 可直跑）：`soundTag`（补 OALD8 `__gb/__us` 中缀）、`isExampleSound`、`scopeResources`（zip_file 含 `/<词典名>/` 段过滤，禁止跨库）、`attachSounds`（词头行挂非 exa 头音 + 例句槽逐位挂 exa，`#槽==#exa` 防护，DSL 已带 [s] 时跳过）、`pickHeadAudio`（audio_ref 优先退化） |
+| `src/lib/parseDefinition.ts` | HTML 分支：`split(/<br\s*\/?>\|\n/i)`；trim 前 3+ 空格捕获 → `slot: true` 例句行；sense 行残留句点清理（`.replace(/^\.?\s*/, "")`）；DictLine 增 `slot?` 字段 |
+| `src/components/DictBody.tsx` | soundTag 外移引用；pronVariants 按文件去重（同文件并钮）；频率徽章（S1/W3，原 head 行丢弃不显示）；音标行尾 `BrE AmE` 文本清理（与按钮重复） |
+| `src/components/DictEntryView.tsx` | 新 prop `dictionaryName`；`scopedResources = scopeResources(...)`；`lines = attachSounds(parsed, scopedResources)`；`speak()` 改为 audio_ref 优先 + 首个 audio 退化、统一走 playRes；`speakFile` 在 scoped 内精确匹配，找不到 console.info 静默；onSpeak 显隐判据保留但改用 scoped 探测（跨库资源不再误显示按钮） |
+| `src/pages/DictionaryPanel.tsx` | 传 `dictionaryName={dicts.find(d => d.id === activeDict)?.name}` |
+
+### R2.3 验证
+
+- `pnpm exec tsc --noEmit` → 0 错误
+- `pnpm build` → ✓ built in 1.73s（90 modules）
+- 浏览器静态骨架目检（dev :1420，无 tauri IPC 属预期）：词典页 chips + 查询框正常渲染，
+  截图 `screenshots/r2-dict-page-static.jpg`
+
 ## R3 端到端 fixture 测试（node 直跑，无浏览器/无 tauri 依赖）
 
 ```text
@@ -131,12 +172,37 @@ entry_count>0、audio_ref 正确填充；多词典（ 不同 dict_dir）各自�
 残留、义项 a. b. 编号正确。多词典：模拟第二个词典（若库里还有）时 speak 匹配不越库。
 ```
 
+## R3 fixture 记录（2026-09-29）
+
+- 文件：`docs/repair-dict-fixture.mjs`。用法：`node --experimental-strip-types docs/repair-dict-fixture.mjs`
+  （node ≥22.6；经 `node:sqlite` 只读直连运行库真数据，期望值取自废弃库 DSL 原文真值）。
+- 断言 38 项：DOCE5 hello 全链（entry/audio_ref、resources=10、无 [lang]/[trn]/[*]/[/ex]
+  残留、sense 1..6、词头 [bre_hello0205(英音), ame_hello(美音)]、音标 `/həˈləʊ, he- -ˈloʊ/`、
+  8 例句逐位对应 exa_p008-*.wav、槽计数 8==8、▪ 行无音）；跨库隔离（15 行混库 →
+  scope 后 10 行、他库文件名不可命中、audio_ref 优先、OALD8/MW11/LPron3 各自头音
+  正确且无 exa 泄漏）；同文件并钮去重；槽律防护（不齐不挂）；DSL 分支不二次挂载 +
+  DSL 回归（17 [ex] 行中 8 行带音）。
+- 结果：**PASS=38 FAIL=0**（fixture 曾有 2 处断言写错已修正：guard 应只断言槽行、
+  DSL [ex] 行真值实为 17 个含 8 个带音）。
+
+
 ## R4 真机验收清单（转交用户）
 
-- [ ] pnpm tauri dev，词典页点「重建词典」（R1 后必须）
-- [ ] hello：英音有声、美音有声、每个例句小喇叭有声
-- [ ] 换词典（若有第二本）查询另一个词，声音归属正确
-- [ ] 拖拽排序仍生效
+前置说明：R2 后前端在**无 tauri 的纯浏览器**下无法查询词条（invoke 缺失属预期），
+以下全部需在 `pnpm tauri dev` 真机下验收。运行库本次未重建（R1 已证数据健康）。
+
+- [ ] `pnpm tauri dev`，词典页选 **En-En_Longman_DOCE5**，查 `hello`
+- [ ] 词头行：`hello` + `S1` 徽章 + 音标 `/həˈləʊ, he- -ˈloʊ/` + **[英音][美音] 两枚胶囊**
+- [ ] 点英音 → bre_hello0205.wav 有声；点美音 → ame_hello.wav 有声；右上喇叭 = audio_ref 优先
+- [ ] 8 个例句行尾各 1 枚小喇叭（Hello, John! / Stanley… / Well, hello there… /
+      Hello – may I speak to Anne? / Hello! Is there anybody home? /
+      You didn't remember her birthday? Hello! / Hello! What's happened here? /
+      Promise you'll look in…），逐句有声且**读的正是该句**
+- [ ] REGISTER / THESAURUS 的 ▪ 注释行**无**小喇叭（该词典这些行本无音）
+- [ ] 换 OALD8 查 hello：[英音][美音]（z_hello__gb_1 / z_hello__us_1）且例句行无喇叭（该库无例句音数据）
+- [ ] 换 Merriam_Webster11 查 hello：单枚无标注按钮（hello001.wav）
+- [ ] 换 Longman_Pronunciation3 查 hello：[英音][美音]（uk_hello0205 / us_hello）
+- [ ] 拖拽排序仍生效；换词典后再查同词，声音归属仍正确（不越库）
 
 ## R5 DoD
 

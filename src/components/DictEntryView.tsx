@@ -6,12 +6,13 @@
  * 词条类型 DictEntry 沿用 src 形状（word/word_raw/definition/audio_ref），
  * dictionary_name 由查询侧可选附带，缺失时回退词典占位名。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   dictGetResource,
   dictLoadResources,
   type DictResource,
 } from "@/storage/dict";
+import { attachSounds, pickHeadAudio, scopeResources } from "@/lib/dictSounds";
 import { DictBody, useParsed } from "@/components/DictBody";
 import { XIcon } from "@/components/icons";
 import { useAppLocale } from "@/lib/i18n";
@@ -28,6 +29,8 @@ interface DictEntryViewProps {
   entry: DictEntry;
   /** 收起释义（词典页只需回到查询态；结果区复用为可选） */
   onClose?: () => void;
+  /** 词条所属词典名（= dictionaries.name，与 zip_file 目录段一致）。用于资源越库过滤 */
+  dictionaryName?: string;
 }
 
 interface LoadedResource {
@@ -75,9 +78,9 @@ function toPlayableAudioUrl(dataUrl: string): string {
   }
 }
 
-export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
+export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewProps) {
   const { t } = useAppLocale();
-  const lines = useParsed(entry.definition);
+  const parsed = useParsed(entry.definition);
   // 资源清单（懒加载；Plan B 下 resources 表可能为空 → 行内喇叭静默失败可接受）
   const [resources, setResources] = useState<DictResource[] | null>(null);
   // 已加载的资源内容：dataUrl（audio 播放缓存）
@@ -100,6 +103,19 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
     return () => { alive = false; };
   }, [entry.word]);
 
+  // 本词典作用域资源：get_resources 按 word JOIN 会带出同名词形的其他词典行，
+  // 必须经 zip_file 目录段过滤，禁止跨库取音（多词典匹配铁律）
+  const scopedResources = useMemo(
+    () => (resources ? scopeResources(resources, dictionaryName) : null),
+    [resources, dictionaryName],
+  );
+
+  // 解析行 + 音频挂载：词头英/美 + 例句槽逐位（dictSounds 槽位律，防护不等不挂）
+  const lines = useMemo(
+    () => (scopedResources ? attachSounds(parsed, scopedResources) : parsed),
+    [parsed, scopedResources],
+  );
+
   /** 提取并播放单个 audio 资源（缓存命中直接复用 dataUrl） */
   const playRes = async (res: DictResource) => {
     const key = `${res.zip_file}/${res.filename}`;
@@ -118,28 +134,38 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
     void new Audio(playable).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
   };
 
-  /** 词头喇叭：取首个 audio 资源播放 */
+  /**
+   * 词头喇叭：优先 entry.audio_ref（词条自身的主发音），退化取本词典首个 audio
+   * 资源；播放统一走 playRes。资源列表用已探测的 scopedResources，避免重复 IPC。
+   */
   const speak = async () => {
     try {
-      const list = await dictLoadResources(entry.word);
-      const audio = list.find((r) => r.kind === "audio");
-      if (audio) await playRes(audio);
+      const list = scopedResources ?? scopeResources(await dictLoadResources(entry.word), dictionaryName);
+      const audio = pickHeadAudio(list, entry.audio_ref);
+      if (audio) {
+        await playRes(audio);
+      } else {
+        console.info("[DictEntryView] 本词典无可用 audio 资源:", entry.word, dictionaryName ?? "(未知名)");
+      }
     } catch (err) {
       console.error("[DictEntryView] 词头播放失败:", err);
     }
   };
 
   /**
-   * 行内小喇叭：按 filename 在**当前词典范围**内解析资源。
-   * dictLoadResources 的 resources JOIN 已带 zip_file（天然同库），
-   * 按 filename 精确匹配后走 dictGetResource + toPlayableAudioUrl 播放；
-   * 找不到（跨库/资源表空）→ 静默失败，不发起额外跨库调用。
+   * 行内小喇叭：按 filename 在**本词典范围**内解析资源。
+   * scopedResources 已按 zip_file 目录段过滤（跨库文件名不可命中），
+   * 按 filename 精确匹配后走 dictGetResource（用资源行自身的 zip_file，精确提取）
+   * + toPlayableAudioUrl 播放；找不到 → 静默 + console，不发起跨库调用。
    */
   const speakFile = async (filename: string) => {
     try {
-      const list = resources ?? await dictLoadResources(entry.word);
+      const list = scopedResources ?? scopeResources(await dictLoadResources(entry.word), dictionaryName);
       const res = list.find((r) => r.kind === "audio" && r.filename === filename);
-      if (!res) return;
+      if (!res) {
+        console.info("[DictEntryView] 本词典无此音频:", filename, dictionaryName ?? "(未知名)");
+        return;
+      }
       await playRes(res);
     } catch (err) {
       console.error("[DictEntryView] 行内播放失败:", err);
@@ -165,8 +191,9 @@ export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
         <DictBody
           lines={lines}
           entryTitle={entry.word_raw || entry.word}
-          // 探测到 audio 资源才显示词头喇叭，避免无发音词典出现死按钮
-          onSpeak={resources?.some((r) => r.kind === "audio") ? speak : undefined}
+          // 探测到本词典 audio 资源才显示词头喇叭，避免无发音词典出现死按钮
+          // （保留 resources 探测判据；作用域已限本词典，跨库资源不再误显示）
+          onSpeak={scopedResources?.some((r) => r.kind === "audio") ? speak : undefined}
           onSpeakFile={speakFile}
         />
 

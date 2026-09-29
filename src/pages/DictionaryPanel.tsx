@@ -217,7 +217,11 @@ export function DictionaryPanel({
             <EmptyState icon={<SearchIcon size={34} />} title={t("dict.notFound")} hint={entryError} />
           </div>
         ) : entry ? (
-          <DictEntryView entry={entry} onClose={onCloseEntry} />
+          <DictEntryView
+            entry={entry}
+            onClose={onCloseEntry}
+            dictionaryName={dicts.find((d) => d.id === activeDict)?.name}
+          />
         ) : (
           <div className="min-h-48 rounded-xl border border-dashed border-line">
             <EmptyState
