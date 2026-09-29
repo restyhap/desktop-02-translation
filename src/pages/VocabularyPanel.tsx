@@ -241,7 +241,7 @@ export function VocabularyPanel({ onWordPick }: VocabularyPanelProps) {
             </button>
             <button
               onClick={createGroup}
-              className="ml-auto h-7 rounded-md bg-accent px-3 text-[11px] text-accent-fg transition-colors hover:bg-accent-hover"
+              className="h-7 rounded-md bg-accent px-3 text-[11px] text-accent-fg transition-colors hover:bg-accent-hover"
             >
               {t("common.create")}
             </button>
