@@ -204,6 +204,67 @@ slot 律副证: DSL缩进行=503, 含[s]=497, 缩进无声=6
 - [ ] 换 Longman_Pronunciation3 查 hello：[英音][美音]（uk_hello0205 / us_hello）
 - [ ] 拖拽排序仍生效；换词典后再查同词，声音归属仍正确（不越库）
 
+## R5 实测取证与三词典优化记录（2026-09-29，OALD8 / MW11 / LPron3）
+
+> 任务：以 DOCE5 已验收路线为基准，对 OALD8 / MW11 / LPron3 做同等的音标-词头钮-例句-音频容器链路优化。
+> 全部结论来自运行库直查 + 各词典 .dsl.dz 原文解压 + 资源容器字节实测，无臆断。
+
+### R5.1 各词典词条音频分布实测（行序与 [s] 文档序）
+
+**核心规律三本词典全部成立**：`audio_ref == 该词条 rowid 最小 audio.filename`，全库 100%：
+```text
+En-En_OALD8:                 55128/55128
+En-En_Merriam_Webster11:     69707/69707
+En-En_Longman_Pronunciation3: 67223/67223
+```
+```
+```
+（audio_ref 是 dictbuild 用 find_sound 取 DSL 第一个 [s]——首音频由此与文档序挂钩，加上 DSL 逐词条抽样对照 OALD8 run/take/world/book/hello 逐位一致，判「resources rowid 序 == DSL [s] 文档序」成立。）
+
+**词条形态（hello 实测）**：
+| 词典 | definition 形态 | 头音 | 例句音 |
+|---|---|---|---|
+| OALD8(id2) | 展开产物有 `<br>` 分行、无 3+ 空格缩进、`•` bullet 例句 | z_hello__gb_1 / z_hello__us_1 | **无**（词典级数据不含例句音，示例仅文本） |
+| MW11(id3) | 展开产物 `\hə-ˈlō, he-\` 反斜杠括号音标、多义项词条多 `‹br›` 行 | hello001.wav（无前缀 stem） | **无** |
+| LPron3(id4) | `[p]BrE[/p]`/`[p]AmE[/p]` 剥标签后纯文本 + `▷`变体行/`▶`复合行（各自带音） | uk_hello0205 / us_hello | **无**（复合词行有独立音，非例句） |
+
+**3+ 空格槽位律**：400 词条随机抽样各词典（OALD8/MW11/LPron3）含 3+ 空格缩进行词条 = **0/400/0/400/0/400**（DOCE5 独有）。三词典词条 definition 富含 `` 但无 DOCE 式例句槽形态。
+
+**MW11 stem 前缀潜雷（R-B 修正点）**：MW11 词头音文件名常见 `exa*` 前缀（exacer01=exacerbate、exactl01=exactly，24 词条 audio_ref 如此），`/^exa/i` 例句判别会把它们误划入例句音——修复为 `/^exa[_-]/` 分隔锚（DOCE5 86104 个例句音 100% 为 `exa_` 前缀）。
+
+**LPron3 群律（light 实测）**：`▶`复合行与资源分组精确对齐（词头 pair + 8 复合行 pair == 18 音全部逐位），hello 的 ▷ 变体行（ed/es/ing）无音（14/14 待确验；样本 600 词里含复合行 22 群中 20 群对齐，2 例外）。
+
+### R5.2 前端修（R-B）
+
+| 文件 | 改动 |
+|---|---|
+| `src/lib/dictSounds.ts` | `isExampleSound` 加 `exa[_-]` 分隔锚；`attachSounds` 增 `dictionaryName` 参数，LPron3 分支 attachLpron3（词头 1 组 + 复合行 group 依序，群律 mismatch 时不挂）；接口 SoundHtmlLine |
+| `src/lib/dictPhonetic.ts` | **新增** extractPhonetic：`/…/`（DOCE/LPron）+ `[…]`（OALD8 词形表 `[run runs ran running]` 含空格跳过）+ `\…\`（MW11，内文归一 `/…/`）三形态；LPron3 无括号型返回 null |
+| `src/components/DictBody.tsx` | 音标提取改走 extractPhonetic（strip-tags + 控制符净化语义不变） |
+| `src/components/DictEntryView.tsx` | attachSounds 传 `dictionaryName` |
+
+**音频容器实测（zip 实物头 24B）**：
+```text
+OALD8  z__babe_didrikson_1_gb_1.wav : RIFF + fmt 30B + wFormatTag=0x55 → 伪 WAV(MP3 载荷)，toPlayableAudioUrl 已适配
+MW11   aah00001.wav                  : RIFF + fmt 16B + wFormatTag=0x01 → 真 PCM WAV，直接播
+LPron3 uk_ld44a.wav                  : RIFF + fmt 30B + wFormatTag=0x55 → 伪 WAV(MP3 载荷)，toPlayableAudioUrl 已适配
+```
+mime 推断 `.wav→audio/x-wav` 与容器适配 OK，Rust 侧（dict.rs）无需再改。
+
+### R5.3 验证
+
+- `pnpm exec tsc --noEmit` → 0 错误
+- `pnpm build` → ✓ built in 1.65s（91 modules）
+- `node docs/repair-dict-fixture.mjs` → PASS=56 FAIL=0
+- Rust 侧未改动（无需 cargo check/test）
+
+### R5.4 遗留（需真机确认/后续优化），不掩盖
+
+1. **LPron3 音标行残 `\`（DSL `\\` 转义足迹）**：词头 `hello BrE AmE hə ˈləʊ he- AmE\ -ˈloʊ` 中的 `AmE\`/` -ˈloʊ`（NAmE 段）音标残形不齐（无括号型识别丢框），**展示有瑕疵但无功能缺**。
+2. **多 sense 词条的次位音**（OALD8 run 的 z_ran \_\_gb/us 或 MW11 run 的 run00002+runles01 与 LPron3 变体行音）在 head 钮之外；OALD8/MW11 词条头挂全部非 exa 音（hello 词典仅 1-2 音正确多 sense 词条 head 挂 4/3 音钮）。需要词典级锚位精修（行内 stem↔word 匹配需要更大样本）。
+3. **LPron3 群律相架层 2/22 例外**（样本 600 词条含复合行 22 群），mismatch 时按「宁缺勿错」只挂词头。需要更大样本验证是否还有形态族（如 uk_lpd_ 与 uk_ld44 词头音分布不规则）。
+4. **运行库是权威**：三词典与 DOCE5 无资源差异，无遗留入库呃。
+
 ## R5 DoD
 
 全部勾选 R4 + tsc/build/smoke + commits 序列 + 本文件 R0 取证段填写完整。
