@@ -6,6 +6,8 @@ export interface AppSettings {
   llm: LlmSettings;
   appearance: AppearanceSettings;
   shortcuts: ShortcutSettings;
+  /** 词典页 chips 显示顺序（id 列表；后端 settings_store 为 JSON 透传，可选字段） */
+  dictOrder?: number[];
 }
 
 export interface LlmSettings {

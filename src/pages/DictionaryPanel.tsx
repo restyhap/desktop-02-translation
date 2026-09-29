@@ -5,6 +5,9 @@
  * 数据：App 状态机下传（src dict_* 命令），本页只做交互编排；build 走 src 全库构建。
  */
 import { useEffect, useRef, useState } from "react";
+import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
+import { useSortable } from "@dnd-kit/react/sortable";
+import { arrayMove } from "@dnd-kit/helpers";
 import type { DictInfo } from "@/storage/dict";
 import type { DictEntry } from "@/components/DictEntryView";
 import { useAppLocale, type TFn, type UiLocale } from "@/lib/i18n";
@@ -32,6 +35,8 @@ interface DictionaryPanelProps {
   buildProgress: number;
   onSelect: (id: number) => void;
   onBuild: (id: number) => void;
+  /** 词典顺序（settings.dictOrder 驱动）+ 拖拽换序回调（App 负责落库） */
+  onReorder: (ids: number[]) => void;
   /** 当前词条（App 状态；主页输入单词也会落到这里） */
   entry: DictEntry | null;
   entryLoading: boolean;
@@ -42,7 +47,7 @@ interface DictionaryPanelProps {
 
 export function DictionaryPanel({
   dicts, activeDict, hasDb, buildingId, buildProgress,
-  onSelect, onBuild, entry, entryLoading, entryError, onLookup, onCloseEntry,
+  onSelect, onBuild, onReorder, entry, entryLoading, entryError, onLookup, onCloseEntry,
 }: DictionaryPanelProps) {
   const { t, locale } = useAppLocale();
   const [query, setQuery] = useState("");
@@ -101,30 +106,34 @@ export function DictionaryPanel({
         hint={t("dict.pageHint")}
       />
 
-      {/* 词典选择 chips + 重建：单行横向滚动，不换行 */}
+      {/* 词典选择 chips + 重建：单行横向滚动 + 拖拽排序（顺序经 App 落 settings.dictOrder） */}
       <div className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-bg-inset p-1">
         <span className="shrink-0 pl-1.5 text-[11px] text-ink-3">{t("dict.label")}</span>
-        {dicts.map((d) => {
-          const active = d.id === activeDict;
-          return (
-            <button
-              key={d.id}
-              onClick={() => onSelect(d.id)}
-              title={`${fmtCount(d.entry_count, locale, t)} · ${d.name}`}
-              className={`flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[11px] transition-colors ${
-                active
-                  ? "bg-accent text-accent-fg"
-                  : "text-ink-2 hover:bg-hover hover:text-ink"
-              }`}
-            >
-              <BookIcon size={11} />
-              {d.name}
-              <span className={active ? "text-accent-fg/70" : "text-ink-3"}>
-                {d.entry_count > 0 ? fmtCount(d.entry_count, locale, t) : t("dict.noData")}
-              </span>
-            </button>
-          );
-        })}
+        <DragDropProvider
+          onDragOver={(event) => {
+            const { source, target } = event.operation;
+            if (!source || !target || source.id === target.id) return;
+            const from = dicts.findIndex((d) => d.id === Number(source.id));
+            const to = dicts.findIndex((d) => d.id === Number(target.id));
+            if (from < 0 || to < 0 || from === to) return;
+            onReorder(arrayMove(dicts, from, to).map((d) => d.id));
+          }}
+        >
+          {dicts.map((d, index) => (
+            <SortableDictChip key={d.id} dict={d} index={index} active={d.id === activeDict} locale={locale} t={t} onSelect={onSelect} />
+          ))}
+          <DragOverlay>
+            {(source) => {
+              const d = dicts.find((x) => x.id === Number(source.id));
+              return d ? (
+                <span className="flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent px-2 text-[11px] text-accent-fg shadow-[var(--shadow-popup)]">
+                  <BookIcon size={11} />
+                  {d.name}
+                </span>
+              ) : null;
+            }}
+          </DragOverlay>
+        </DragDropProvider>
         <button
           onClick={() => setMoreOpen((v) => !v)}
           className="ml-1 text-[11px] text-ink-3 hover:text-accent"
@@ -197,6 +206,41 @@ export function DictionaryPanel({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 可拖拽词典 chip（点击=选中，拖动=换序；dnd-kit 手势阈值与 click 天然区分） */
+function SortableDictChip({
+  dict, index, active, locale, t, onSelect,
+}: {
+  dict: DictInfo;
+  index: number;
+  active: boolean;
+  locale: UiLocale;
+  t: TFn;
+  onSelect: (id: number) => void;
+}) {
+  const { ref, isDragging } = useSortable({
+    id: dict.id,
+    index,
+    transition: { duration: 250, easing: "cubic-bezier(0.65, 0, 0.35, 1)" },
+  });
+  return (
+    <div ref={ref} className={`shrink-0 ${isDragging ? "opacity-50" : ""}`}>
+      <button
+        onClick={() => onSelect(dict.id)}
+        title={`${fmtCount(dict.entry_count, locale, t)} · ${dict.name}`}
+        className={`flex h-6 items-center gap-1.5 whitespace-nowrap rounded-md px-2 text-[11px] transition-colors ${
+          active ? "bg-accent text-accent-fg" : "text-ink-2 hover:bg-hover hover:text-ink"
+        }`}
+      >
+        <BookIcon size={11} />
+        {dict.name}
+        <span className={active ? "text-accent-fg/70" : "text-ink-3"}>
+          {dict.entry_count > 0 ? fmtCount(dict.entry_count, locale, t) : t("dict.noData")}
+        </span>
+      </button>
     </div>
   );
 }

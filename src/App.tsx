@@ -141,10 +141,19 @@ function App() {
         const r = await listDicts();
         const withData = r.dictionaries.filter((d) => d.entry_count > 0);
         const list = withData.length > 0 ? withData : r.dictionaries;
-        setDicts(list);
+        // 词典顺序：settings.dictOrder 优先（拖拽排序落库后的持久化顺序）
+        const order = settings.dictOrder ?? [];
+        const sorted = order
+          ? [...list].sort(
+              (a, b) =>
+                (order.indexOf(a.id) < 0 ? 1e9 : order.indexOf(a.id)) -
+                (order.indexOf(b.id) < 0 ? 1e9 : order.indexOf(b.id)),
+            )
+          : list;
+        setDicts(sorted);
         setActiveDict((prev) => {
-          if (prev !== null && list.some((d) => d.id === prev)) return prev;
-          return list.length > 0 ? list[0].id : null;
+          if (prev !== null && sorted.some((d) => d.id === prev)) return prev;
+          return sorted.length > 0 ? sorted[0].id : null;
         });
       }
     } catch (err) {
@@ -366,6 +375,20 @@ function App() {
 
             {sidebarTab === "dictionary" && (
               <DictionaryPanel
+                onReorder={(ids) => {
+                  setDicts((prev) => {
+                    const map = new Map(prev.map((d) => [d.id, d]));
+                    const next = ids.map((id) => map.get(id)).filter((d): d is DictInfo => !!d);
+                    // 新增词典（重建后）按 id 补到尾部
+                    for (const d of prev) if (!ids.includes(d.id)) next.push(d);
+                    return next;
+                  });
+                  // 持久化：settings.dictOrder（后端 settings_store 为 JSON 透传）
+                  saveSettings({
+                    ...settings,
+                    dictOrder: ids,
+                  }).catch((err: unknown) => console.error("[App] 词典顺序保存失败:", err));
+                }}
                 dicts={dicts}
                 activeDict={activeDict}
                 hasDb={dictHasDb}
