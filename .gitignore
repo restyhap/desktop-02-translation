@@ -22,3 +22,4 @@ src-tauri/gen/
 # 包管理器锁定：以 npm (package-lock.json) 为准，pnpm 文件不提交
 pnpm-lock.yaml
 pnpm-workspace.yaml
+screenshots/
