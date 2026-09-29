@@ -150,7 +150,7 @@ export function DictionaryPanel({
       />
 
       {/* 词典选择 chips + 重建：单行横向滚动 + 拖拽排序（顺序经 App 落 settings.dictOrder） */}
-      <div className="flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-bg-inset p-1">
+      <div className="mt-5 flex min-w-0 items-center gap-1 overflow-x-auto rounded-lg bg-bg-inset p-1">
         <span className="shrink-0 pl-1.5 text-[11px] text-ink-3">{t("dict.label")}</span>
         <DndContext
           sensors={sensors}

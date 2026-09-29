@@ -327,7 +327,8 @@ function App() {
                 {/* 页头：统一规格（语言 chip + 翻译标题） */}
                 <PageHeader icon={<LanguagesIcon size={16} />} title={t("nav.home")} />
 
-                {/* 一体化翻译卡 */}
+                {/* 一体化翻译卡（与页头留一档间距，对齐历史页节奏） */}
+                <div className="mt-5">
                 <TranslationInput
                   text={text}
                   onTextChange={setText}
@@ -337,6 +338,7 @@ function App() {
                   defaultSourceLang={settings.translation.defaultSourceLang}
                   defaultTargetLang={settings.translation.defaultTargetLang}
                 />
+                </div>
 
                 {/* 芯片行：独立一档，仅引擎（单词查询去词典页，主页不混排） */}
                 <TranslateChipsRow
