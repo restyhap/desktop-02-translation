@@ -590,7 +590,7 @@ function ApiSection({ settings, patch }: { settings: AppSettings; patch: (fn: (d
       })
       .catch((err: unknown) => {
         console.error("[Settings] 添加失败:", err);
-        showToast(t("result.failed"), "error");
+        showToast(`${t("result.failed")}: ${String(err)}`, "error");
       });
   };
 

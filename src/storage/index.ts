@@ -110,7 +110,7 @@ export async function addVocabularyWord(
   phonetic?: string,
   example?: string
 ): Promise<string> {
-  return invoke<string>("add_vocabulary_word_cmd", { word, translation, group_id: groupId, phonetic, example });
+  return invoke<string>("add_vocabulary_word_cmd", { word, translation, groupId, phonetic, example });
 }
 
 export async function deleteVocabularyWord(id: string): Promise<void> {
@@ -126,7 +126,7 @@ export async function addApiKey(
   key: string,
   sort: number
 ): Promise<void> {
-  await invoke("add_api_key_cmd", { service, display_name: displayName, app_id: appId, key, sort });
+  await invoke("add_api_key_cmd", { service, displayName, appId, key, sort });
 }
 
 export async function getApiKey(service: string): Promise<string | null> {
@@ -160,16 +160,16 @@ export async function addEngine(
   requiresAppId: boolean
 ): Promise<void> {
   await invoke("add_engine_cmd", {
-    service_name: serviceName,
-    display_name: displayName,
+    serviceName,
+    displayName,
     url,
-    requires_app_id: requiresAppId,
-    requires_api_key: true,
+    requiresAppId,
+    requiresApiKey: true,
   });
 }
 
 export async function deleteEngine(serviceName: string): Promise<void> {
-  await invoke("delete_engine_cmd", { service_name: serviceName });
+  await invoke("delete_engine_cmd", { serviceName });
 }
 
 export async function reorderApiKeys(ordered: string[]): Promise<void> {
