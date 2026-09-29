@@ -13,6 +13,12 @@ interface TranslationInputProps {
   dictionaryId?: number | null;
 }
 
+/** 引擎芯片（camelCase 出口：TranslateChipsRow / 弹窗共用） */
+export interface EngineChip {
+  service: string;
+  label: string;
+}
+
 export function TranslationInput({ onTranslate, onDictLookup, defaultText, engine, lang, dictionaryId }: TranslationInputProps) {
   const [text, setText] = useState(defaultText || "");
   const [sourceLang, setSourceLang] = useState<Language>("en");

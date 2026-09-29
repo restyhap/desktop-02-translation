@@ -1,67 +1,69 @@
-import React, { useEffect, useState, createContext, useContext } from "react";
+/**
+ * Toast 体系 — 对齐 src/components/ui/Toast.tsx（唯一被接线的 ui 基件）
+ * 右下角，3s 自动淡出，success/error/info 三态。
+ */
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useState,
+  type ReactNode,
+} from "react";
 
-interface ToastProps {
+export type ToastType = "success" | "error" | "info";
+
+interface ToastItem {
+  id: number;
+  type: ToastType;
   message: string;
-  type?: "success" | "error" | "info";
-  duration?: number;
-  onClose: () => void;
 }
 
-export function Toast({ message, type = "info", duration = 3000, onClose }: ToastProps) {
-  const [visible, setVisible] = useState(true);
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setVisible(false);
-      setTimeout(onClose, 300);
-    }, duration);
-    return () => clearTimeout(timer);
-  }, [duration, onClose]);
-
-  const bgColor = type === "success" ? "bg-green-500" : type === "error" ? "bg-red-500" : "bg-blue-500";
-
-  return (
-    <div
-      className={`fixed bottom-4 right-4 ${bgColor} text-white px-4 py-2 rounded-lg shadow-lg transition-all duration-300 ${
-        visible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2"
-      }`}
-    >
-      {message}
-    </div>
-  );
+interface ToastContextValue {
+  showToast: (message: string, type?: ToastType) => void;
 }
 
-interface ToastContextType {
-  showToast: (message: string, type?: "success" | "error" | "info") => void;
-}
+const ToastContext = createContext<ToastContextValue | null>(null);
 
-const ToastContext = createContext<ToastContextType | null>(null);
+const COLORS: Record<ToastType, { bar: string }> = {
+  success: { bar: "bg-[var(--green)]" },
+  error: { bar: "bg-[var(--red)]" },
+  info: { bar: "bg-[var(--accent)]" },
+};
 
-export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [toast, setToast] = useState<{ message: string; type: "success" | "error" | "info" } | null>(null);
+let nextId = 1;
 
-  const showToast = (message: string, type: "success" | "error" | "info" = "info") => {
-    setToast({ message, type });
-  };
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [items, setItems] = useState<ToastItem[]>([]);
+
+  const showToast = useCallback((message: string, type: ToastType = "info") => {
+    const id = nextId++;
+    setItems((prev) => [...prev, { id, type, message }]);
+    // 3s 自动淡出（对齐 src 行为）
+    setTimeout(() => {
+      setItems((prev) => prev.filter((t) => t.id !== id));
+    }, 3000);
+  }, []);
 
   return (
     <ToastContext.Provider value={{ showToast }}>
       {children}
-      {toast && (
-        <Toast
-          message={toast.message}
-          type={toast.type}
-          onClose={() => setToast(null)}
-        />
-      )}
+      <div className="pointer-events-none fixed bottom-6 right-6 z-50 flex flex-col gap-2">
+        {items.map((t) => (
+          <div
+            key={t.id}
+            className="rise-in pointer-events-auto flex items-center overflow-hidden rounded-md bg-bg-elevated shadow-[var(--shadow-card)]"
+          >
+            <span className={`h-full w-1 self-stretch ${COLORS[t.type].bar}`} />
+            <span className="px-3 py-2 text-[13px] text-ink">{t.message}</span>
+          </div>
+        ))}
+      </div>
     </ToastContext.Provider>
   );
 }
 
-export function useToast() {
-  const context = useContext(ToastContext);
-  if (!context) {
-    throw new Error("useToast must be used within a ToastProvider");
-  }
-  return context;
+export function useToast(): { showToast: (message: string, type?: ToastType) => void } {
+  const ctx = useContext(ToastContext);
+  if (!ctx) throw new Error("useToast 必须在 ToastProvider 内使用");
+  return { showToast: ctx.showToast };
 }

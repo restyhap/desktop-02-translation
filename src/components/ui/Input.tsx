@@ -1,20 +1,25 @@
-import { forwardRef, type InputHTMLAttributes } from "react";
+import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {}
+type InputProps = InputHTMLAttributes<HTMLInputElement>;
 
-const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className = "", ...props }, ref) => {
-    return (
-      <input
-        ref={ref}
-        className={`flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
-        {...props}
-      />
-    );
-  }
-);
+/** 单行输入框 */
+export function Input({ className = "", ...rest }: InputProps) {
+  return (
+    <input
+      className={`h-9 w-full rounded-lg border border-line bg-bg-elevated px-3 text-sm text-ink placeholder:text-ink-3 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent-soft ${className}`}
+      {...rest}
+    />
+  );
+}
 
-Input.displayName = "Input";
+type TextareaProps = TextareaHTMLAttributes<HTMLTextAreaElement>;
 
-export { Input };
-export type { InputProps };
+/** 多行输入框 */
+export function Textarea({ className = "", ...rest }: TextareaProps) {
+  return (
+    <textarea
+      className={`w-full resize-none rounded-lg border border-line bg-bg-elevated px-3 py-2.5 text-sm text-ink placeholder:text-ink-3 outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent-soft ${className}`}
+      {...rest}
+    />
+  );
+}

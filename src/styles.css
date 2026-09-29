@@ -1,46 +1,208 @@
 @import "tailwindcss";
 
-@theme {
-  --color-background: #f8f9fa;
-  --color-foreground: #1a1a1a;
-  --color-muted: #f5f5f4;
-  --color-muted-foreground: #78716c;
-  --color-border: #e5e7eb;
-  --color-primary: #2563eb;
-  --color-primary-foreground: #ffffff;
-  --color-secondary: #f0f4ff;
-  --color-secondary-foreground: #1a1a1a;
-  --color-accent: #f0f4ff;
-  --color-accent-foreground: #1a1a1a;
-  --color-destructive: #ef4444;
-  --color-destructive-foreground: #ffffff;
-  --color-ring: #2563eb;
-  --color-input: #e5e7eb;
-  --color-card: #ffffff;
-  --color-card-foreground: #1a1a1a;
-  --color-popover: #ffffff;
-  --color-popover-foreground: #1a1a1a;
-  --color-success: #22c55e;
-  --color-success-foreground: #ffffff;
-  --color-warning: #f59e0b;
-  --color-warning-foreground: #ffffff;
-  --color-info: #2563eb;
-  --color-info-foreground: #ffffff;
-  --radius-sm: 0.25rem;
-  --radius-md: 0.375rem;
-  --radius-lg: 0.5rem;
-  --radius-xl: 0.75rem;
+/* ==================== 设计令牌 ====================
+ * 来源：front-preview/src/styles.css v2 整版迁入（tokens/双主题/rise-in/滚动条）。
+ * 白天: 纸感中性白；夜间: 深空蓝灰。主题切换用 html[data-theme]。
+ */
+:root {
+  /* 表面 (亮) */
+  --bg: #f7f7f5;
+  --bg-elevated: #ffffff;
+  --bg-inset: #efefec;
+  --bg-hover: rgba(24, 24, 27, 0.045);
+  --bg-active: rgba(24, 24, 27, 0.08);
+
+  /* 文字 (亮) */
+  --text-1: #232323;
+  --text-2: #8a8a86;
+  --text-3: #b8b8b3;
+
+  /* 线与描边 (亮) */
+  --border: rgba(24, 24, 27, 0.09);
+  --border-strong: rgba(24, 24, 27, 0.16);
+
+  /* 主色 (亮): 笔尖蓝 */
+  --accent: #2b5cdb;
+  --accent-hover: #244fb8;
+  --accent-soft: rgba(43, 92, 219, 0.1);
+  --accent-fg: #ffffff;
+
+  /* 辅助色 (亮) */
+  --gold: #b4802d;
+  --gold-soft: rgba(180, 128, 45, 0.12);
+  --green: #2e8a4c;
+  --green-soft: rgba(46, 138, 76, 0.12);
+  --red: #cd4d3f;
+  --red-soft: rgba(205, 77, 63, 0.1);
+
+  /* 阴影 (亮) */
+  --shadow-card: 0 1px 2px rgba(28, 28, 30, 0.05);
+  --shadow-popup: 0 16px 48px rgba(28, 28, 30, 0.16), 0 2px 8px rgba(28, 28, 30, 0.08);
+  /* v2：悬浮抬升（卡片 hover 反馈） */
+  --shadow-lift: 0 10px 30px rgba(28, 28, 30, 0.10), 0 2px 6px rgba(28, 28, 30, 0.06);
 }
 
+/* 夜间 (深空蓝灰) */
+[data-theme="dark"] {
+  --bg: #17202d;
+  --bg-elevated: #1d2736;
+  --bg-inset: #131a26;
+  --bg-hover: rgba(226, 224, 218, 0.055);
+  --bg-active: rgba(226, 224, 218, 0.09);
+
+  --text-1: #e6e4de;
+  --text-2: #9aa4b4;
+  --text-3: #67718a;
+
+  --border: rgba(226, 224, 218, 0.11);
+  --border-strong: rgba(226, 224, 218, 0.22);
+
+  --accent: #6b93f2;
+  --accent-hover: #85a8f6;
+  --accent-soft: rgba(107, 147, 242, 0.15);
+  --accent-fg: #17202d;
+
+  --gold: #d1a55c;
+  --gold-soft: rgba(209, 165, 92, 0.16);
+  --green: #5cbf7e;
+  --green-soft: rgba(92, 191, 126, 0.14);
+  --red: #e2746a;
+  --red-soft: rgba(226, 116, 106, 0.14);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-popup: 0 16px 48px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.3);
+  /* v2：悬浮抬升（dark） */
+  --shadow-lift: 0 10px 30px rgba(0, 0, 0, 0.40), 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+/* ==================== Tailwind 主题映射 ==================== */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elevated: var(--bg-elevated);
+  --color-bg-inset: var(--bg-inset);
+  --color-hover: var(--bg-hover);
+  --color-active: var(--bg-active);
+  --color-ink: var(--text-1);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-fg: var(--accent-fg);
+  --color-gold: var(--gold);
+  --color-gold-soft: var(--gold-soft);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+
+  --font-serif-display: "Georgia", "Songti SC", "SimSun", serif;
+  --font-body:
+    ui-sans-serif, -apple-system, "PingFang SC", "Segoe UI", "Helvetica Neue", sans-serif;
+
+  --radius-card: 10px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+
+  /* ===== 旧 shadcn 语义 token 的别名映射（保留旧引用，禁止删） =====
+   * 来源：迁移前 src/styles.css 的 @theme 令牌；后续若旧组件全部退场，
+   * 此段仅为兼容层，删除前需确认无引用。 */
+  --color-background: var(--bg);
+  --color-foreground: var(--text-1);
+  --color-muted: var(--bg-inset);
+  --color-muted-foreground: var(--text-2);
+  --color-border: var(--border);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-fg);
+  --color-secondary: var(--bg-inset);
+  --color-secondary-foreground: var(--text-1);
+  --color-destructive: var(--red);
+  --color-destructive-foreground: #ffffff;
+  --color-ring: var(--accent);
+  --color-input: var(--border);
+  --color-card: var(--bg-elevated);
+  --color-card-foreground: var(--text-1);
+  --color-popover: var(--bg-elevated);
+  --color-popover-foreground: var(--text-1);
+  --color-success: var(--green);
+  --color-warning: var(--gold);
+  --color-info: var(--accent);
+}
+
+/* ==================== 基础 ==================== */
+html,
+body,
+#root {
+  box-sizing: border-box;
+  height: 100%;
+}
 * {
   box-sizing: border-box;
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  background-color: var(--color-background);
-  color: var(--color-foreground);
+  margin: 0;
+  font-family: var(--font-body);
+  background-color: var(--bg);
+  color: var(--text-1);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
   line-height: 1.5;
+  overflow: hidden;
+  user-select: none;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+input,
+textarea {
+  user-select: text;
+  /* 字体继承交给 tailwind preflight（@layer base），避免未分层规则压过 utilities 字号 */
+}
+
+button {
+  cursor: pointer;
+}
+
+/* 二窗口（划词弹窗）保持可选中：正文需要复制/选中时的兜底 */
+.popup-root {
+  user-select: text;
+}
+
+/* 主词 / 词条标题的衬线显示 */
+.font-display {
+  font-family: var(--font-serif-display);
+}
+
+/* 动画卷轴: 一次性入场 */
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.rise-in {
+  animation: rise-in 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* 自定义滚动条: 细窄、宽容忍 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }

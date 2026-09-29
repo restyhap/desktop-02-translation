@@ -1,186 +1,154 @@
-import { useState, useMemo } from "react";
-import { dictGetResource, dictLoadResources, type DictResource } from "@/storage/dict";
-import { parseDefinition, type DictLine } from "@/lib/parseDefinition";
+/**
+ * 词典词条视图 — v2 视觉（front-preview）× src 资源能力
+ *
+ * 视觉：文章式词条卡（词典名头 + 巨大衬线词头 + 义项排印 + 资源 chips 懒加载）。
+ * 数据：@/storage/dict 的 dictLoadResources / dictGetResource（zip_file + mime/data_base64）。
+ * 词条类型 DictEntry 沿用 src 形状（word/word_raw/definition/audio_ref），
+ * dictionary_name 由查询侧可选附带，缺失时回退词典占位名。
+ */
+import { useEffect, useState } from "react";
+import {
+  dictGetResource,
+  dictLoadResources,
+  type DictResource,
+} from "@/storage/dict";
+import { DictBody, useParsed } from "@/components/DictBody";
+import { XIcon } from "@/components/icons";
+import { useAppLocale } from "@/lib/i18n";
 
 export interface DictEntry {
   word: string;
   word_raw: string;
   definition: string;
   audio_ref?: string | null;
+  dictionary_name?: string;
 }
 
-function LineView({ line }: { line: DictLine }) {
-  switch (line.type) {
-    case "pos":
-      return (
-        <div className="flex items-baseline gap-2 mt-2.5 first:mt-0">
-          <span className="shrink-0 px-2 py-0.5 bg-primary/10 text-primary rounded text-xs font-semibold">
-            {line.label}
-          </span>
-          {line.html && (
-            <span
-              className="text-xs text-muted-foreground"
-              dangerouslySetInnerHTML={{ __html: line.html }}
-            />
-          )}
-        </div>
-      );
-    case "group":
-      return (
-        <div className="mt-2.5 text-[11px] font-bold text-muted-foreground uppercase tracking-wide">
-          {line.label}
-        </div>
-      );
-    case "sense":
-      return (
-        <div className="flex gap-2 mt-1.5 pl-0.5">
-          <span className="w-5 shrink-0 text-right text-primary font-semibold text-sm leading-6">
-            {line.label}
-          </span>
-          <span
-            className="min-w-0 flex-1 text-sm leading-6"
-            dangerouslySetInnerHTML={{ __html: line.html }}
-          />
-        </div>
-      );
-    case "subsense":
-      return (
-        <div className="flex gap-2 mt-0.5 pl-7">
-          <span className="w-4 shrink-0 text-muted-foreground text-sm leading-6">
-            {line.label}
-          </span>
-          <span
-            className="min-w-0 flex-1 text-sm leading-6"
-            dangerouslySetInnerHTML={{ __html: line.html }}
-          />
-        </div>
-      );
-    case "example":
-      return (
-        <div
-          className="pl-9 text-sm text-muted-foreground italic leading-6"
-          dangerouslySetInnerHTML={{ __html: line.html }}
-        />
-      );
-    case "meta":
-      return (
-        <div className="mt-1 text-xs text-muted-foreground/80 leading-5">
-          <span
-            dangerouslySetInnerHTML={{ __html: line.html }}
-          />
-        </div>
-      );
-    default:
-      return (
-        <div
-          className="pl-0.5 text-sm leading-6"
-          dangerouslySetInnerHTML={{ __html: line.html }}
-        />
-      );
-  }
+interface DictEntryViewProps {
+  entry: DictEntry;
+  /** 收起释义（词典页只需回到查询态；结果区复用为可选） */
+  onClose?: () => void;
 }
 
-function ResourceChips({ entry }: { entry: DictEntry }) {
-  const [resources, setResources] = useState<DictResource[]>([]);
-  const [images, setImages] = useState<{ filename: string; url: string }[]>([]);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [loadingRes, setLoadingRes] = useState(false);
+interface LoadedResource {
+  key: string;
+  dataUrl: string | null;
+}
 
-  const loadResources = async () => {
-    if (resources.length > 0 || loadingRes) return;
-    setLoadingRes(true);
+export function DictEntryView({ entry, onClose }: DictEntryViewProps) {
+  const { t } = useAppLocale();
+  const lines = useParsed(entry.definition);
+  // 资源 chips（懒加载清单）
+  const [resources, setResources] = useState<DictResource[] | null>(null);
+  const [resLoading, setResLoading] = useState(false);
+  // 已加载的资源内容：dataUrl（image 直接显示；audio 播放）
+  const [loaded, setLoaded] = useState<LoadedResource[]>([]);
+  const [audioSrc, setAudioSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    // 换词时重置资源区
+    setResources(null);
+    setLoaded([]);
+    setAudioSrc(null);
+  }, [entry.word]);
+
+  const loadChip = async () => {
+    if (resources) {
+      setResources(null);
+      return;
+    }
+    setResLoading(true);
     try {
-      const res = await dictLoadResources(entry.word);
-      setResources(res);
+      const list = await dictLoadResources(entry.word);
+      setResources(list);
     } catch (err) {
-      console.error("[Dictionary] 加载资源失败:", err);
+      console.error("[DictEntryView] 加载资源清单失败:", err);
+      setResources([]);
     } finally {
-      setLoadingRes(false);
+      setResLoading(false);
     }
   };
 
-  const playAudio = async (res: DictResource) => {
-    try {
-      const data = await dictGetResource(res.zip_file, res.filename);
-      const url = `data:${data.mime};base64,${data.data_base64}`;
-      setAudioUrl(url);
-      new Audio(url).play().catch((e) => console.error("播放失败:", e));
-    } catch (err) {
-      console.error("[Dictionary] 提取音频失败:", err);
+  const openResource = async (res: DictResource) => {
+    const key = `${res.zip_file}/${res.filename}`;
+    const known = loaded.find((l) => l.key === key);
+    if (!known) {
+      try {
+        const data = await dictGetResource(res.zip_file, res.filename);
+        const dataUrl = `data:${data.mime};base64,${data.data_base64}`;
+        setLoaded((prev) => [...prev, { key, dataUrl }]);
+        if (res.kind === "audio") setAudioSrc(dataUrl);
+        return;
+      } catch (err) {
+        console.error("[DictEntryView] 提取词典资源失败:", err);
+        setLoaded((prev) => [...prev, { key, dataUrl: null }]);
+        return;
+      }
+    }
+    if (res.kind === "audio" && known.dataUrl) {
+      setAudioSrc(known.dataUrl);
+      void new Audio(known.dataUrl).play().catch((e) => console.error("[DictEntryView] 播放失败:", e));
     }
   };
 
-  const showImage = async (res: DictResource) => {
-    if (images.some((i) => i.filename === res.filename)) return;
-    try {
-      const data = await dictGetResource(res.zip_file, res.filename);
-      const url = `data:${data.mime};base64,${data.data_base64}`;
-      setImages((prev) => [...prev, { filename: res.filename, url }]);
-    } catch (err) {
-      console.error("[Dictionary] 提取图片失败:", err);
-    }
-  };
+  const images = loaded.filter((l) => l.dataUrl?.startsWith("data:image"));
 
   return (
-    <div className="mt-2">
-      <button
-        onClick={loadResources}
-        className="text-xs text-muted-foreground hover:text-primary transition-colors"
-        title="加载发音与图片"
-      >
-        🔊 资源
-      </button>
+    <div className="rise-in flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-3">
+      <div className="rounded-card border border-line bg-bg-elevated shadow-[var(--shadow-card)]">
+        {/* 头部：词头 + 词典名 + 关闭 */}
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2 text-xs text-ink-3">
+          <span className="font-mono">{entry.dictionary_name ?? t("dict.fallbackName")}</span>
+          {onClose && (
+            <button
+              onClick={onClose}
+              title={t("dict.collapseDef")}
+              className="ml-auto grid h-6 w-6 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-ink"
+            >
+              <XIcon size={13} />
+            </button>
+          )}
+        </div>
+        <DictBody lines={lines} entryTitle={entry.word_raw || entry.word} />
 
-      {(resources.length > 0 || loadingRes) && (
-        <div className="mt-2 space-y-2">
-          <div className="flex flex-wrap gap-1.5">
-            {resources.map((res, i) => (
+        {/* 资源 chips：点击展开懒加载清单 */}
+        <div className="flex items-center gap-1.5 border-t border-line px-4 py-2">
+          <button
+            onClick={loadChip}
+            className="rounded-md bg-bg-inset px-2 py-1 text-[11px] text-ink-2 transition-colors hover:bg-hover hover:text-ink"
+          >
+            {t("dict.resources")}
+            {resources ? " ▾" : resLoading ? " …" : ""}
+          </button>
+          {resources?.map((res) => {
+            const key = `${res.zip_file}/${res.filename}`;
+            return (
               <button
-                key={i}
-                onClick={() => (res.kind === "audio" ? playAudio(res) : showImage(res))}
-                className="px-2 py-1 bg-muted rounded text-xs hover:bg-primary/15 transition-colors truncate max-w-[160px]"
-                title={res.filename}
+                key={key}
+                onClick={() => openResource(res)}
+                title={res.kind === "audio" ? t("dict.playAudio") : t("dict.viewImage")}
+                className="rounded-md border border-line px-2 py-1 text-[11px] text-ink-2 transition-colors hover:border-accent/40 hover:text-accent"
               >
-                {res.kind === "audio" ? "🔊" : "🖼️"} {res.filename}
+                {res.kind === "audio" ? "🔊" : "🖼"} {res.filename}
               </button>
+            );
+          })}
+        </div>
+        {/* 音频控件 + 内嵌图片 */}
+        {(audioSrc || images.length > 0) && (
+          <div className="border-t border-line px-4 py-2">
+            {audioSrc && <audio controls src={audioSrc} className="h-7 w-44" />}
+            {images.map((img) => (
+              <img
+                key={img.key}
+                src={img.dataUrl as string}
+                alt={t("dict.imageAlt")}
+                className="max-h-64 rounded-md border border-line"
+              />
             ))}
           </div>
-
-          {audioUrl && (
-            <audio key={audioUrl} src={audioUrl} controls className="w-full h-8" />
-          )}
-
-          {images.map((img) => (
-            <img
-              key={img.filename}
-              src={img.url}
-              alt={img.filename}
-              className="max-h-48 rounded border"
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function DictEntryView({ entry }: { entry: DictEntry }) {
-  const lines = useMemo(() => parseDefinition(entry.definition), [entry.definition]);
-
-  return (
-    <div className="flex-1 overflow-auto space-y-2 text-sm">
-      <div className="flex items-baseline gap-2">
-        <span className="font-semibold text-base">{entry.word}</span>
-        {entry.word_raw && (
-          <span className="text-muted-foreground text-xs">{entry.word_raw}</span>
         )}
       </div>
-      <div className="space-y-0.5">
-        {lines.map((line, i) => (
-          <LineView key={i} line={line} />
-        ))}
-      </div>
-      <ResourceChips entry={entry} />
     </div>
   );
 }

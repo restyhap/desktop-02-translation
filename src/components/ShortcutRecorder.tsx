@@ -1,4 +1,11 @@
+/**
+ * 快捷键录制器 — src 交互逻辑（.ekey 解析/序列窗/disabled 状态）× preview 视觉
+ *
+ * document 捕获阶段 keydown/keyup；pressedKeys + activeModifiers + 500ms 序列窗；
+ * Escape=取消还原，Enter=提交，Backspace/Delete=弹出末键；普通键必须有修饰键。
+ */
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useAppLocale } from "@/lib/i18n";
 
 interface ShortcutRecorderProps {
   value: string;
@@ -43,6 +50,7 @@ function formatShortcut(parts: string[]): string {
 }
 
 export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorderProps) {
+  const { t } = useAppLocale();
   const [recording, setRecording] = useState(false);
   const [pressedKeys, setPressedKeys] = useState<string[]>([]);
 
@@ -71,11 +79,7 @@ export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorder
   const commit = useCallback(
     (keys: string[]) => {
       stopRecording();
-      if (keys.length > 0) {
-        onChange(formatShortcut(keys));
-      } else {
-        onChange("");
-      }
+      onChange(keys.length > 0 ? formatShortcut(keys) : "");
     },
     [stopRecording, onChange]
   );
@@ -152,32 +156,33 @@ export function ShortcutRecorder({ value, onChange, disabled }: ShortcutRecorder
   }, [recording, handleKeyDown, handleKeyUp]);
 
   const displayParts = recording
-    ? (pressedKeys.length > 0 ? pressedKeys.map(formatKey) : [])
-    : (value ? parseShortcut(value).map(formatKey) : []);
-
-  const displayText =
-    displayParts.length > 0 ? displayParts.join(" + ") : (recording ? "请按快捷键..." : "未设置");
+    ? pressedKeys.map(formatKey)
+    : parseShortcut(value).map(formatKey);
 
   return (
     <button
       onClick={startRecording}
       disabled={disabled || recording}
-      className={`flex items-center gap-2 px-3 py-2 border rounded-md text-sm font-mono transition-all ${
+      title={recording ? t("shortcut.recordingTip") : t("shortcut.clickToRecord")}
+      className={`flex h-8 min-w-32 flex-wrap items-center gap-1 rounded-md border px-2.5 text-left text-xs transition-colors ${
         recording
-          ? "border-primary bg-primary/10 text-primary animate-pulse"
-          : "border-input bg-background hover:bg-muted text-foreground"
-      } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+          ? "animate-pulse border-accent text-accent"
+          : "border-line bg-bg-elevated text-ink hover:border-accent/50"
+      } ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}
     >
-      {displayText.split(" + ").map((key, i) => (
-        <span key={i} className="flex items-center gap-1">
-          {i > 0 && <span className="text-muted-foreground">+</span>}
-          <kbd className="px-2 py-1 bg-background border rounded text-xs shadow-sm">
+      {displayParts.length > 0 ? (
+        displayParts.map((key, i) => (
+          <kbd
+            key={i}
+            className="rounded border border-line bg-bg px-1.5 py-0.5 font-mono text-[11px] leading-5"
+          >
             {key}
           </kbd>
+        ))
+      ) : (
+        <span>
+          {recording ? t("shortcut.pressNow") : value || t("shortcut.notSet")}
         </span>
-      ))}
-      {recording && (
-        <span className="text-xs opacity-75 ml-1">Enter 确认 · Esc 取消 · Backspace 删除</span>
       )}
     </button>
   );
