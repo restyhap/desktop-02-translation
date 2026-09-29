@@ -13,7 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import { homedir } from "node:os";
 
 const { parseDefinition } = await import(new URL("../src/lib/parseDefinition.ts", import.meta.url).href);
-const { attachSounds, scopeResources, soundTag, pickHeadAudio } = await import(
+const { attachSounds, scopeResources, soundTag, pickHeadAudio, isExampleSound } = await import(
   new URL("../src/lib/dictSounds.ts", import.meta.url).href
 );
 
@@ -220,6 +220,84 @@ const resOf = (entry) => resourcesByEntry.get(entry.id) ?? [];
     oldDb.close();
   } else {
     console.log("SKIP dsl.branch（废弃库不存在，DSL 分支回归跳过）");
+  }
+}
+
+// ================= 5) 非.DOCE5 词典（OALD8 / MW11 / LPron3）hello + 群律/槽位律断言 =================
+{
+  // ---- OALD8 hello：词头 [英][美]（z_hello__gb_1 / z_hello__us_1）、例句行无音 ----
+  {
+    const e = byDict.get(2);
+    const res = resOf(e);
+    const lines = attachSounds(parseDefinition(e.definition), res, EXPECT.OALD8.name);
+    const head = lines.find((l) => l.type === "text");
+    check("oald8.headSounds", JSON.stringify(head?.sounds ?? []) === JSON.stringify(EXPECT.OALD8.pron),
+      `oald8 head=${JSON.stringify(head?.sounds)}`);
+    check("oald8.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.OALD8.pronTags),
+      `oald8 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
+    // OALD8 词头音标 [həˈləʊ]（方括号型）与 MW11 \…\ 反斜杠型断言：见 phonetic 提取段
+    // 例句行为 bullet 行（• Hello John…），本词典无例句音数据 → 全条无 exa 文件
+    check("oald8.noExa", !lines.some((l) => (l.sounds ?? []).some((f) => /^exa/i.test(f))), "oald8 例句槽泄漏 exa");
+    // 例句行（type=example）不得被附加声音（该词典只有词头/词形变体音）
+    check("oald8.examplesSilent", lines.filter((l) => l.type === "example").every((l) => !l.sounds?.length),
+      "oald8 例句行有音");
+  }
+
+  // ---- MW11 hello：单钮（hello001.wav，无前缀 → 无标注）、音标 \…\ 反斜杠型 ----
+  {
+    const e = byDict.get(3);
+    const res = resOf(e);
+    const lines = attachSounds(parseDefinition(e.definition), res, EXPECT.MW11.name);
+    const head = lines.find((l) => l.type === "text");
+    check("mw11.headSounds", JSON.stringify(head?.sounds ?? []) === JSON.stringify(EXPECT.MW11.pron),
+      `mw11 head=${JSON.stringify(head?.sounds)}`);
+    check("mw11.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.MW11.pronTags),
+      `mw11 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
+    const base = head.html.replace(/<[^>]+>/g, "");
+    // MW11 音标断言见 phonetic 提取段（extractPhonetic）
+    // isExampleSound：MW11 stem 前缀（exacer01/exactl01 等）不得误判为例句音；DOCE5 exa_ 命中
+    check("mw11.notExaByPrefix", !isExampleSound("exacer01.wav") && !isExampleSound("exactl01.wav") && isExampleSound("exa_p008-001354151.wav"),
+      "isExampleSound 判定与 MW11 stem 前缀冲突");
+    // MW11 无例句槽（3+ 空格行 0/400 实测）
+    check("mw11.noSlotLines", !lines.some((l) => l.slot === true), "mw11 出现 slot 行");
+  }
+
+  // ---- LPron3 hello + light 群律（词头 1 组 + ▶ 复合行按序 1 组/行）----
+  {
+    // hello：2 音（uk_/us_），▷ 变体行无音
+    const e = byDict.get(4);
+    const lines = attachSounds(parseDefinition(e.definition), resOf(e), EXPECT.LPron3.name);
+    const head = lines.find((l) => l.type === "text");
+    check("lpron3.headSounds", JSON.stringify(head?.sounds ?? []) === JSON.stringify(EXPECT.LPron3.pron),
+      `lpron3 head=${JSON.stringify(head?.sounds)}`);
+    check("lpron3.headTags", JSON.stringify((head?.sounds ?? []).map(soundTag)) === JSON.stringify(EXPECT.LPron3.pronTags),
+      `lpron3 tags=${JSON.stringify((head?.sounds ?? []).map(soundTag))}`);
+    check("lpron3.variantsSilent", lines.filter((l) => l.type === "text" && l !== head).every((l) => !l.sounds?.length),
+      "lpron3 hello ▷ 变体行有音");
+
+    // light：18 音 = 词头 1 组 + 复合行 8 组；composite ▶ 行按序逐位挂载
+    {
+      const le = db.prepare(`select id, definition from entries_data where word='light' and dictionary_id=4`).get();
+      const lres = db.prepare(`select kind, filename from resources where entry_id=? and kind='audio' order by id`).all(le.id);
+      const llines = attachSounds(parseDefinition(le.definition), lres, EXPECT.LPron3.name);
+      const lhead = llines.find((l) => l.type === "text");
+      check("lpron3.light.headPair",
+        JSON.stringify(lhead?.sounds ?? []) === JSON.stringify(["uk_light_las2_br.wav", "us_light1.wav"]),
+        `lpron3 light head=${JSON.stringify(lhead?.sounds)}`);
+      const compound = llines.filter((l) => l.type === "text" && l !== lhead && l.html.replace(/<[^>]+>/g, "").trim().startsWith("▶"));
+      const pairs = lres.slice(2);
+      check("lpron3.light.compoundCount", compound.length === 8 && pairs.length === 16,
+        `compound=${compound.length} pairs=${pairs.length}`);
+      // 群律逐位：第 k 复合行挂 resources[2+2k..3+2k]
+      const aligned = compound.every((l, k) =>
+        JSON.stringify(l.sounds ?? []) === JSON.stringify([pairs[2 * k].filename, pairs[2 * k + 1].filename]));
+      check("lpron3.light.groupLaw", aligned, "lpron3 light 复合行群律不齐");
+      // ▷ 变体行（lighted/lighter 等 6 行）不挂
+      const variants = llines.filter((l) => l.type === "text" && l !== lhead &&
+        !l.html.replace(/<[^>]+>/g, "").trim().startsWith("▶"));
+      check("lpron3.light.variantsSilent", variants.length >= 5 && variants.every((l) => !l.sounds?.length),
+        `variants=${variants.length} 有音=${variants.filter((l) => l.sounds?.length).length}`);
+    }
   }
 }
 

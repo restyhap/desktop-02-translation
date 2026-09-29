@@ -27,11 +27,21 @@ export interface SoundResource {
   zip_file: string;
 }
 
+/** 解析行最小形状（含 html，供 LPron3 复合行文本判别） */
+export interface SoundHtmlLine extends SoundSlotLine {
+  html: string;
+}
+
 export type PronTag = "英音" | "美音" | null;
 
-/** 例句音文件命名约定（Longman DOCE5: exa_p008-*.wav 等） */
+/**
+ * 例句音文件命名约定（Longman DOCE5: exa_p008-000170875.wav 等）。
+ * 分隔符必须有 `exa_`/`exa-`：MW11 的词头音也常以 exa 开头（exacer01.wav=exacerbate、
+ * exactl01.wav=exactly，stem 折叠产物，2026-09-29 实测 24 词条 audio_ref 如此），
+ * `/^exa/i` 无锚会把它们误判为例句音 → 头行漏挂。实测 DOCE5 例句音 86104 个 100% 带 `exa_`。
+ */
 export function isExampleSound(filename: string): boolean {
-  return /^exa/i.test(filename);
+  return /^exa[_-]/i.test(filename);
 }
 
 /** 发音前缀 → 英/美标注（词头胶囊用；无前缀返回 null 只显喇叭） */
@@ -63,11 +73,13 @@ export function scopeResources<T extends { zip_file: string }>(resources: T[], d
  * - 词头行（首个 text 行）：非 exa 前缀 audio 资源（英/美发音变体）
  * - 例句槽行（slot 标记行）：exa_* 资源按文档序逐位挂载（槽数==资源数才挂）
  * - definition 自带 [s]（DSL 分支已解析出 sounds）时整体跳过，信任原文
+ * - LPron3 专属分支（见 attachLpron3）：词头 1 组 + ▶ 复合词行按「英/美对组」逐位挂
  * 不可变：返回新数组，原行对象不改动。
  */
-export function attachSounds<T extends SoundSlotLine>(
+export function attachSounds<T extends SoundHtmlLine>(
   lines: T[],
   resources: ReadonlyArray<Pick<SoundResource, "kind" | "filename">>,
+  dictionaryName?: string | null,
 ): T[] {
   if (lines.length === 0 || resources.length === 0) return lines;
   // DSL 分支产物已带 [s] 声音，跳过挂载避免双重
@@ -75,6 +87,12 @@ export function attachSounds<T extends SoundSlotLine>(
 
   const audioFiles = resources.filter((r) => r.kind === "audio").map((r) => r.filename);
   if (audioFiles.length === 0) return lines;
+
+  // LPron3：资源行序 == DSL [s] 文档序（audio_ref == 首 audio 100%），头组=首 2，
+  // 余下每 2 个一组对应 definition 中 ▶ 复合词行（群律见 R5 实测）
+  if (dictionaryName && isLpron3(dictionaryName)) {
+    return attachLpron3(lines, audioFiles);
+  }
 
   const headFiles = dedupeKeepOrder(audioFiles.filter((f) => !isExampleSound(f)));
   const exaFiles = dedupeKeepOrder(audioFiles.filter((f) => isExampleSound(f)));
@@ -102,6 +120,55 @@ export function attachSounds<T extends SoundSlotLine>(
 /** 保序去重 */
 function dedupeKeepOrder(files: string[]): string[] {
   return [...new Set(files)];
+}
+
+/**
+ * LPron3（Longman Pronunciation）判别：仅按词典名前缀，结构律按实测资源行序推理，
+ * 不做词条级硬编码。
+ */
+function isLpron3(dictionaryName: string): boolean {
+  return dictionaryName.startsWith("En-En_Longman_Pronunciation");
+}
+
+/**
+ * LPron3 专属挂载（与 DOCE5 槽位律同思路的「结构群律」分支）：
+ * 实测规律（docs/repair-dict.md R5）：
+ * 1. resources 行序 == DSL 原文 [s] 文档序（audio_ref == rowid 首音频 67223/67223）。
+ * 2. 词头占首 2 个音频（uk_…+us_…，抽查 13 词条首对 100% uk 先 us 后）；
+ *    之后每 2 个相邻音频为一组，依序对应 definition 中「▶ 开头复合词行」。
+ * 3. ▷ 词形变体行（hello|ed 等）一般不带音，不挂。
+ * 防错律（沿 DOCE5 宁缺勿错）：复合行数 ≠ 组数时只挂词头，其余不挂；
+ * 无复合行词条（hello 等）词头照挂首组。
+ */
+function attachLpron3<T extends SoundHtmlLine>(lines: T[], audioFiles: string[]): T[] {
+  if (audioFiles.length < 2) return lines;
+  const headFiles = audioFiles.slice(0, 2);
+  const pairs: string[][] = [];
+  for (let i = 2; i + 1 < audioFiles.length; i += 2) pairs.push(audioFiles.slice(i, i + 2));
+
+  // 复合行定位：第 0 行是词头，其后 text 行以 ▶ 开头视为复合词行
+  const compoundIdx: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (i === 0 || lines[i].type !== "text") continue;
+    const text = lines[i].html.replace(/<[^>]+>/g, "").trim();
+    if (text.startsWith("▶")) compoundIdx.push(i);
+  }
+
+  const aligned = pairs.length > 0 && pairs.length === compoundIdx.length;
+  let headDone = false;
+  let cursor = 0;
+  return lines.map((line, idx) => {
+    if (line.sounds && line.sounds.length > 0) return line;
+    if (!headDone && idx === 0 && line.type === "text") {
+      headDone = true;
+      return { ...line, sounds: headFiles };
+    }
+    if (aligned && compoundIdx.includes(idx)) {
+      const pair = pairs[cursor++];
+      return pair ? { ...line, sounds: pair } : line;
+    }
+    return line;
+  });
 }
 
 /**

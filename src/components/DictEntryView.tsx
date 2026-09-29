@@ -110,8 +110,8 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
 
   // 解析行 + 音频挂载：词头英/美 + 例句槽逐位（dictSounds 槽位律，防护不等不挂）
   const lines = useMemo(
-    () => (scopedResources ? attachSounds(parsed, scopedResources) : parsed),
-    [parsed, scopedResources],
+    () => (scopedResources ? attachSounds(parsed, scopedResources, dictionaryName) : parsed),
+    [parsed, scopedResources, dictionaryName],
   );
 
   /** 提取并播放单个 audio 资源（缓存命中直接复用 dataUrl） */
