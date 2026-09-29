@@ -74,6 +74,13 @@ pub async fn translate_with_cache(
         _ => return Err(format!("未找到 {} 的 API Key，请在设置中配置", engine)),
     };
 
+    // 引擎名归一化：AddKeyModal 以用户输入生成 service（如 "aliyun"/"alibaba"），
+    // 而分发只认内置规范名；使用别名归一到规范 key，避免自定义名落 default 分支
+    let engine = match engine {
+        "aliyun" | "alibaba" | "alibaba_cloud" => "ali",
+        other => other,
+    };
+
     match engine {
         "google" => translate_with_google(text, source_lang, target_lang, &api_key).await,
         "deepl" => translate_with_deepl(text, source_lang, target_lang, &api_key).await,
