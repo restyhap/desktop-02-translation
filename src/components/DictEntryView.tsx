@@ -12,7 +12,7 @@ import {
   dictLoadResources,
   type DictResource,
 } from "@/storage/dict";
-import { attachSounds, pickHeadAudio, scopeResources } from "@/lib/dictSounds";
+import { attachSounds, scopeResources } from "@/lib/dictSounds";
 import { DictBody, useParsed } from "@/components/DictBody";
 import { XIcon } from "@/components/icons";
 import { useAppLocale } from "@/lib/i18n";
@@ -131,24 +131,6 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
   };
 
   /**
-   * 词头喇叭：优先 entry.audio_ref（词条自身的主发音），退化取本词典首个 audio
-   * 资源；播放统一走 playRes。资源列表用已探测的 scopedResources，避免重复 IPC。
-   */
-  const speak = async () => {
-    try {
-      const list = scopedResources ?? scopeResources(await dictLoadResources(entry.word), dictionaryName);
-      const audio = pickHeadAudio(list, entry.audio_ref);
-      if (audio) {
-        await playRes(audio);
-      } else {
-        console.info("[DictEntryView] 本词典无可用 audio 资源:", entry.word, dictionaryName ?? "(未知名)");
-      }
-    } catch (err) {
-      console.error("[DictEntryView] 词头播放失败:", err);
-    }
-  };
-
-  /**
    * 行内小喇叭：按 filename 在**本词典范围**内解析资源。
    * scopedResources 已按 zip_file 目录段过滤（跨库文件名不可命中），
    * 按 filename 精确匹配后走 dictGetResource（用资源行自身的 zip_file，精确提取）
@@ -187,9 +169,6 @@ export function DictEntryView({ entry, onClose, dictionaryName }: DictEntryViewP
         <DictBody
           lines={lines}
           entryTitle={entry.word_raw || entry.word}
-          // 探测到本词典 audio 资源才显示词头喇叭，避免无发音词典出现死按钮
-          // （保留 resources 探测判据；作用域已限本词典，跨库资源不再误显示）
-          onSpeak={scopedResources?.some((r) => r.kind === "audio") ? speak : undefined}
           onSpeakFile={speakFile}
         />
       </div>

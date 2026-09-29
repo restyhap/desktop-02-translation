@@ -138,14 +138,12 @@ interface DictBodyProps {
   lines: DictLine[];
   /** 未解析的原始 definition（如词典不可解析时的兜底） */
   entryTitle: string;
-  /** 词头喇叭播放回调（未传则隐藏喇叭按钮，避免死按钮） */
-  onSpeak?: () => void;
   /** 行内小喇叭：按声音文件名播放（未传则不渲染行内喇叭） */
   onSpeakFile?: (filename: string) => void;
 }
 
 /** 词典词条正文 */
-export function DictBody({ lines, entryTitle, onSpeak, onSpeakFile }: DictBodyProps) {
+export function DictBody({ lines, entryTitle, onSpeakFile }: DictBodyProps) {
   const { t } = useAppLocale();
 // 词头 + 音标分离: 首行 text 若含 "/…/" 则拆出
 const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() => {
@@ -155,8 +153,13 @@ const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() =>
   const base = first.html.replace(/<[^>]+>/g, "");
   const m = base.match(/^(.*?)\s*(\/[^/]+\/)\s*([\s\S]*)$/);
   if (!m) return { head: entryTitle, phonetic: null, freq: null, pronVariants: [] as PronVariant[], phoneticTail: null, rest: lines };
-  // 音标干净化：去掉 Longman 段内控制符 `$`、尾随空逗/空格
-  const pho = m[2].replace(/\$\s*/g, "").replace(/,\s*,/g, ",").replace(/\s+/g, " ").trim();
+  // 音标干净化：去掉 Longman 段内控制符 `$`、`he- -ˈloʊ` 类变体拼接留下的"- -"、尾随空逗/空格
+  const pho = m[2]
+    .replace(/\$\s*/g, "")
+    .replace(/-\s+-/g, "-")
+    .replace(/,\s*,/g, ",")
+    .replace(/\s+/g, " ")
+    .trim();
   // 频率标记（Longman S1/W3 = 口语/书面最常用前 1000/3000 词），音标前小徽章展示
   const freq = m[1].match(/(?:^|\s)([SW]\d{1,2})$/)?.[1] ?? null;
   // 变体发音：非 exa 音频资源（attachSounds 已挂到头行），同文件并钮去重
@@ -188,15 +191,6 @@ const { head, phonetic, freq, pronVariants, phoneticTail, rest } = useMemo(() =>
         {phonetic && <span className="font-mono text-xs text-ink-3">{phonetic}</span>}
         {/* 音标区：英/美两枚带标注按钮（从词头行 sounds 派生），点击分别播放 */}
         {onSpeakFile && <PronButtons variants={pronVariants} onSpeakFile={onSpeakFile} />}
-        {onSpeak && (
-          <button
-            onClick={onSpeak}
-            title={t("tts.speak")}
-            className="ml-auto grid h-8 w-8 place-items-center rounded-md text-ink-3 transition-colors hover:bg-hover hover:text-accent"
-          >
-            <Volume2Icon size={15} />
-          </button>
-        )}
       </div>
       <div className="mt-2">
         {phoneticTail && <LineView line={{ type: "text", html: phoneticTail }} onSpeakFile={onSpeakFile} />}
