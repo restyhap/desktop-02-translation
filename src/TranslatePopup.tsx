@@ -342,7 +342,7 @@ function PopupCard({
         aria-modal="true"
         aria-label={t("popup.title")}
         onKeyDown={onTrapKey}
-        className="popup-root relative flex max-h-full w-full max-w-full flex-col overflow-hidden rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-popup)] sm:w-[420px]"
+        className="popup-root relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-popup)]"
         style={{ opacity }}
         onMouseEnter={onCancelHide}
         onMouseLeave={onScheduleHide}
