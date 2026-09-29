@@ -612,7 +612,13 @@ function ApiSection({ settings, patch, onEnginesChanged }: { settings: AppSettin
   };
 
   const reorder = (ordered: string[]) => {
-    reorderApiKeys(ordered).catch(() => showToast(t("result.failed"), "error"));
+    reorderApiKeys(ordered)
+      // 拖拽排序即优先级变化，需同步刷新面板与主页引擎列表
+      .then(() => {
+        refreshApiKeys();
+        onEnginesChanged?.();
+      })
+      .catch(() => showToast(t("result.failed"), "error"));
   };
 
   return (
