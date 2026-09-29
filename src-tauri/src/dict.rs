@@ -220,7 +220,7 @@ impl Dictionary {
             .prepare(
                 "SELECT r.kind, r.filename, r.zip_file FROM resources r \
                  JOIN entries_data e ON r.entry_id = e.id \
-                 WHERE e.word = ?1 OR e.word_raw = ?1",
+                 WHERE e.word = ?1 COLLATE NOCASE OR e.word_raw = ?1 COLLATE NOCASE",
             )
             .map_err(|e| format!("资源查询准备失败: {}", e))?;
         stmt.bind((1, word.as_str())).map_err(|e| format!("资源查询绑定失败: {}", e))?;
@@ -258,6 +258,8 @@ impl Dictionary {
             "mp3" => "audio/mpeg",
             "ogg" | "oga" => "audio/ogg",
             "m4a" => "audio/mp4",
+            "flac" => "audio/flac",
+            "spx" => "audio/ogg",
             "jpg" | "jpeg" => "image/jpeg",
             "png" => "image/png",
             "gif" => "image/gif",

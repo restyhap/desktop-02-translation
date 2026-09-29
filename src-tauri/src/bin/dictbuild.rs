@@ -262,7 +262,7 @@ fn expand_tags(text: &str) -> String {
 
 fn is_audio(name: &str) -> bool {
     let n = name.to_lowercase();
-    [".wav", ".mp3", ".ogg", ".oga", ".flac", ".m4a"].iter().any(|e| n.ends_with(e))
+    [".wav", ".mp3", ".ogg", ".oga", ".flac", ".m4a", ".spx"].iter().any(|e| n.ends_with(e))
 }
 
 fn is_image(name: &str) -> bool {
