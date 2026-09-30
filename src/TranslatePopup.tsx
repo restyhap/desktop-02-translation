@@ -367,6 +367,16 @@ function PopupCard({
           <span onPointerDown={(e) => e.stopPropagation()}>
             <Select
               aria-label={t("popup.engineAria")}
+              title={`${t("popup.engineAria")} · ←/→`}
+              onKeyDown={(e) => {
+                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                if (engines.length < 2) return;
+                e.preventDefault();
+                const idx = engines.findIndex((x) => x.service === engine);
+                const dir = e.key === "ArrowRight" ? 1 : -1;
+                const next = engines[(idx + dir + engines.length) % engines.length];
+                if (next && next.service !== engine) onEngineChange(next.service);
+              }}
               value={engine}
               onChange={(e) => {
                 const next = e.target.value;

@@ -8,7 +8,6 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 use crate::app::config::{extract_keys_from_shortcut, ShortcutConfig};
 
-static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
 
 /// keyboard-hook 子进程控制柄（Arc 保证看门狗线程也能访问）
 pub struct KeyboardHookProcess(pub Arc<Mutex<Option<Child>>>);
@@ -131,21 +130,13 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                                 (0.0, 0.0)
                             }
                         };
-                        let display_text = if text.trim().is_empty() {
-                            let last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
-                            last.clone().unwrap_or_default()
-                        } else {
-                            text.clone()
-                        };
-                        if display_text.trim().is_empty() {
-                            eprintln!("[main] 剪切板为空且无历史记录，跳过翻译");
+                        // 剪贴板为空/读失败 → 不弹窗（系统 Cmd+C 无可复制内容时同样不动作；
+                        // 同文本重复 Cmd+C+C 由前端 lastTextRef 直接重看上次翻译，无需后端缓存）
+                        if text.trim().is_empty() {
+                            eprintln!("[main] 剪贴板为空，跳过翻译");
                             return;
                         }
-                        eprintln!("[main] display_text len={}", display_text.len());
-                        if !text.trim().is_empty() {
-                            let mut last = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner());
-                            *last = Some(text.clone());
-                        }
+                        eprintln!("[main] display_text len={}", text.len());
                         if let Some(window) = app.get_webview_window("translate") {
                             // 光标所在显示器优先（隐藏窗口的 current_monitor 可能停留在旧显示器，
                             // 造成跨屏时按错误边界钳制 → 弹窗位置偏差的根因）
@@ -197,7 +188,7 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                             let _ = window.set_focus();
                             let _ = window.emit(
                                 "show-translate",
-                                serde_json::json!({ "text": display_text, "cursorX": cursor_x, "cursorY": cursor_y }),
+                                serde_json::json!({ "text": text, "cursorX": cursor_x, "cursorY": cursor_y }),
                             );
                         }
                     } else if trimmed == "SHOW_MAIN" || trimmed.starts_with("SHOW_MAIN ") {
