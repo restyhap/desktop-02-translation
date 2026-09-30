@@ -234,11 +234,12 @@ function TranslatePopup() {
     getCurrentWindow().startResizeDragging(dir).catch(() => {});
   };
 
-  if (!visible) return null;
-
+  // 注意：外壳组件承载 show-translate 监听，绝不能因 visible=false 卸载，
+  // 否则关闭后再按 Cmd+C+C 事件无人接收 → 无法再次弹窗；可见性门在 PopupCard 内部
   return (
     <ToastProvider>
       <PopupCard
+        open={visible}
         result={result}
         visibleText={lastTextRef.current}
         loading={loading}
@@ -277,6 +278,8 @@ interface PopupCardProps {
   /** 实时倒计时（秒），0=无计时 */
   countdown: number;
   targetLang: Language;
+  /** 可见性门：false 时仅卸载卡片 UI（外壳监听仍在，Cmd+C+C 可随时唤回） */
+  open: boolean;
   onEngineChange: (service: string) => void;
   onClose: () => void;
   onCancelHide: () => void;
@@ -287,7 +290,7 @@ interface PopupCardProps {
 
 function PopupCard({
   result, visibleText, loading, error, engines, engine,
-  opacity, hideDelay, countdown, targetLang, onEngineChange, onClose,
+  opacity, hideDelay, countdown, targetLang, open, onEngineChange, onClose,
   onCancelHide, onScheduleHide, onStartDrag, onStartResize,
 }: PopupCardProps) {
   const { t } = useAppLocale();
@@ -329,6 +332,9 @@ function PopupCard({
       first.focus();
     }
   };
+
+  // 可见性门必须放在全部 hooks 之后（保障 hooks 调用顺序恒定）
+  if (!open) return null;
 
   return (
     <div
