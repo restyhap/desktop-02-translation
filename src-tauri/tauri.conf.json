@@ -37,6 +37,22 @@
         "resizable": true,
         "minWidth": 200,
         "minHeight": 120
+      },
+      {
+        "label": "toast",
+        "title": "Toast",
+        "url": "toast.html",
+        "width": 280,
+        "height": 64,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "focusable": false
       }
     ],
     "security": {

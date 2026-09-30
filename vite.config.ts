@@ -17,6 +17,7 @@ export default defineConfig(async () => ({
       input: {
         main: "index.html",
         translate: "translate.html",
+        toast: "toast.html",
       },
     },
   },

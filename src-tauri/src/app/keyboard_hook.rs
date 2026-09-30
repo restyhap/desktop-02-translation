@@ -134,6 +134,37 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                         // 同文本重复 Cmd+C+C 由前端 lastTextRef 直接重看上次翻译，无需后端缓存）
                         if text.trim().is_empty() {
                             eprintln!("[main] 剪贴板为空，跳过翻译");
+                            // 空剪贴板轻提示：屏幕正中透明胶囊，约 1 秒自动消失
+                            // （只证明快捷键已触发，不与划词弹窗逻辑冲突）
+                            if let Some(toast) = app.get_webview_window("toast") {
+                                let monitor = app
+                                    .monitor_from_point(cursor_x, cursor_y)
+                                    .ok()
+                                    .flatten()
+                                    .or_else(|| toast.current_monitor().ok().flatten());
+                                if let Some(m) = monitor {
+                                    let scale = m.scale_factor();
+                                    let size = toast
+                                        .inner_size()
+                                        .unwrap_or(tauri::PhysicalSize::new(280, 64));
+                                    let mx = m.position().x as f64 / scale;
+                                    let my = m.position().y as f64 / scale;
+                                    let mw = m.size().width as f64 / scale;
+                                    let mh = m.size().height as f64 / scale;
+                                    let w = size.width as f64 / scale;
+                                    let h = size.height as f64 / scale;
+                                    let _ = toast.set_position(LogicalPosition::new(
+                                        mx + (mw - w) / 2.0,
+                                        my + (mh - h) / 2.0,
+                                    ));
+                                }
+                                let _ = toast.show();
+                                let toast_bg = toast.clone();
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(std::time::Duration::from_millis(1200));
+                                    let _ = toast_bg.hide();
+                                });
+                            }
                             return;
                         }
                         eprintln!("[main] display_text len={}", text.len());
