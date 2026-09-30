@@ -43,7 +43,7 @@ function CenterToast() {
     <div
       role="status"
       aria-live="polite"
-      className="pointer-events-none flex h-full w-full items-center justify-center rounded-xl border border-line bg-bg-elevated text-xs text-ink-2 shadow-[var(--shadow-popup)]"
+      className="pointer-events-none flex h-full w-full items-center justify-center rounded-xl border border-line bg-bg-elevated text-xs text-ink-2"
       style={{ opacity: 0.9 }}
     >
       {t("popup.toastEmpty")}
