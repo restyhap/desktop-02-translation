@@ -134,8 +134,8 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                         // 同文本重复 Cmd+C+C 由前端 lastTextRef 直接重看上次翻译，无需后端缓存）
                         if text.trim().is_empty() {
                             eprintln!("[main] 剪贴板为空，跳过翻译");
-                            // 空剪贴板轻提示：屏幕正中透明胶囊，约 1 秒自动消失
-                            // （只证明快捷键已触发，不与划词弹窗逻辑冲突）
+                            // 空剪贴板轻提示：与划词弹窗同款跟生成——左上角锚光标
+                            // （圆角切点内退补偿 CUT_INSET，越界按所在屏钳制），约 1 秒自动消失
                             if let Some(toast) = app.get_webview_window("toast") {
                                 let monitor = app
                                     .monitor_from_point(cursor_x, cursor_y)
@@ -143,6 +143,8 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                                     .flatten()
                                     .or_else(|| toast.current_monitor().ok().flatten());
                                 if let Some(m) = monitor {
+                                    const CUT_INSET: f64 =
+                                        12.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
                                     let scale = m.scale_factor();
                                     let size = toast
                                         .inner_size()
@@ -153,10 +155,21 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                                     let mh = m.size().height as f64 / scale;
                                     let w = size.width as f64 / scale;
                                     let h = size.height as f64 / scale;
-                                    let _ = toast.set_position(LogicalPosition::new(
-                                        mx + (mw - w) / 2.0,
-                                        my + (mh - h) / 2.0,
-                                    ));
+                                    let mut px = cursor_x - CUT_INSET;
+                                    let mut py = cursor_y - CUT_INSET;
+                                    if px + w > mx + mw {
+                                        px = mx + mw - w;
+                                    }
+                                    if py + h > my + mh {
+                                        py = my + mh - h;
+                                    }
+                                    if px < mx {
+                                        px = mx;
+                                    }
+                                    if py < my {
+                                        py = my;
+                                    }
+                                    let _ = toast.set_position(LogicalPosition::new(px, py));
                                 }
                                 let _ = toast.show();
                                 let toast_bg = toast.clone();
