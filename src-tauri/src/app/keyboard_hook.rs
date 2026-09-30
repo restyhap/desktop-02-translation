@@ -166,10 +166,12 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                                 // 弹窗逻辑尺寸按「光标所在显示器」的 scale 折算，避免跨屏 scale 混算偏差
                                 let popup_logical_width = size.width as f64 / scale;
                                 let popup_logical_height = size.height as f64 / scale;
-                                // 弹窗锚定光标左上方（弹窗右下角距光标 12px）：
-                                // 圆角卡片视觉重心偏向光标，且不压住鼠标与原选区
-                                let mut px = cursor_x - 12.0 - popup_logical_width;
-                                let mut py = cursor_y - 12.0 - popup_logical_height;
+                                // 锚定光标本身的角点：弹窗左上角压在光标上，主体向右下展开。
+                                // 圆角补偿：卡片 rounded-xl=12px，圆弧使可见角尖相对理想直角
+                                // 内退 cut = r − r/√2 ≈ 3.51px，按此补偿让「视觉角尖」对准光标
+                                const CUT_INSET: f64 = 12.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
+                                let mut px = cursor_x - CUT_INSET;
+                                let mut py = cursor_y - CUT_INSET;
                                 if px + popup_logical_width > monitor_logical_x + monitor_logical_width
                                 {
                                     px =
