@@ -35,6 +35,56 @@ export function LanguagesIcon(p: IconProps) {
   );
 }
 
+/**
+ * 应用 logo（品牌标识）— 与 src-tauri/icons/logo.svg 同源：靛蓝圆角方块 + D/T 渐变线稿。
+ *
+ * 用途：侧栏主页入口。与线稿类图标（languages/history/…）不同，这里是**填充块**，
+ * 所以不放进 Base（Base 固定 stroke 2 + currentColor + 24 视口）。
+ *
+ * 小尺寸可读性：线宽由 logo.svg 的 26 加粗到 40。512 视口渲染到 17px 时，
+ * 描边 = 40/512×17 ≈ 1.33px，与其它线稿图标（2/24×17 ≈ 1.42px）基本同粗。
+ *
+ * 徽章底色走 CSS 变量 --logo-tile（见 styles.css）：浅色主题用品牌靛蓝 #1E1B4B，
+ * 暗色主题必须上提 —— 否则徽章会与深色 --bg 一起"隐身"（对比度仅约 1.02:1）。
+ */
+export function LogoIcon({ size = 20, className }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 512 512"
+      className={className}
+      role="img"
+      aria-label="Desktop Translation"
+    >
+      <defs>
+        <linearGradient id="dtLogoGrad" x1="240" y1="0" x2="340" y2="0" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stopColor="#F8FAFC" />
+          <stop offset="100%" stopColor="#22D3EE" />
+        </linearGradient>
+      </defs>
+      <rect width="512" height="512" rx="112" fill="var(--logo-tile, #1E1B4B)" />
+      <g
+        fill="none"
+        stroke="url(#dtLogoGrad)"
+        strokeWidth="40"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {/* D = 山：源语言（白） */}
+        <g transform="translate(160,256) scale(0.75)">
+          <path d="M -140,120 C -140,20 -100,-100 -30,-120 C 40,-140 100,-60 80,20 C 60,100 -40,120 -80,100" />
+        </g>
+        {/* T = 翼：飞越（天青渐变） */}
+        <g transform="translate(360,256) scale(0.92)">
+          <path d="M -100,-55 C -60,-112 60,-112 100,-55" />
+          <path d="M 0,-40 L 0,80" />
+        </g>
+      </g>
+    </svg>
+  );
+}
+
 export function HistoryIcon(p: IconProps) {
   return (
     <Base {...p}>

@@ -4,5 +4,6 @@ pub mod history;
 pub mod settings;
 pub mod shortcuts;
 pub mod translation;
+pub mod tts;
 pub mod vocabulary;
 pub mod windows;

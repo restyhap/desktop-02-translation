@@ -16,7 +16,7 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {/* 新增 Provider（弹窗 i18n 文案 + 复制 Toast）；透明窗口/高度链入口语义不变 */}
     <LocaleProvider>
-      <ToastProvider>
+      <ToastProvider position="bottom-right">
         <TranslatePopup />
       </ToastProvider>
     </LocaleProvider>

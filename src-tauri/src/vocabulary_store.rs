@@ -55,6 +55,24 @@ impl VocabularyStore {
         Ok(id)
     }
 
+    /// 幂等确保默认分组存在：单连接内查同名（首条），存在则返回其 id，不存在才插入。
+    /// 单连接串行执行 → 多入口并发调用不会重复创建同名默认分组。
+    pub fn ensure_default_group(
+        app: &tauri::AppHandle,
+        name: &str,
+        color: &str,
+    ) -> Result<String, String> {
+        let conn = db::open_db(app)?;
+        let mut stmt = conn
+            .prepare("SELECT id FROM vocabulary_groups WHERE name = ? ORDER BY created_at ASC, id ASC LIMIT 1")
+            .map_err(|e| format!("准备语句失败: {}", e))?;
+        stmt.bind((1, name)).map_err(|e| e.to_string())?;
+        if stmt.next().map_err(|e| format!("查询默认分组失败: {}", e))? == sqlite::State::Row {
+            return stmt.read::<String, _>(0).map_err(|e| e.to_string());
+        }
+        Self::add_group_conn(&conn, name, color)
+    }
+
     pub fn delete_group(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
         Self::delete_group_conn(&db::open_db(app)?, id)
     }

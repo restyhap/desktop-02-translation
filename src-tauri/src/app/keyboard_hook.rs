@@ -27,6 +27,63 @@ fn hook_args(app: &tauri::AppHandle) -> Vec<String> {
     args
 }
 
+/// 弹窗/toast 锚点定位（逻辑坐标 px,py，圆角内退 CUT_INSET + 越界按所在屏钳制）。
+///
+/// 光标坐标以「主进程实时读取」为准：`cursor_position()` 底层是 macOS
+/// `NSEvent.mouseLocation`（物理像素、左上原点），不依赖 keyboard-hook 累积的
+/// `last_mouse_pos`——后者在 hook 启动后鼠标未移动过时为 None → (0,0)，
+/// 会导致 toast/弹窗锚到屏幕左上角而不是跟随鼠标。
+/// 实时读取失败时回退到 hook 事件携带坐标（逻辑单位，兼容旧行为）。
+fn anchor_position(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    hook_x: f64,
+    hook_y: f64,
+    size: tauri::PhysicalSize<u32>,
+    cut_inset: f64,
+) -> Option<(f64, f64)> {
+    // 1) 实时光标（物理像素，全局左上原点）；失败则用 hook 坐标
+    let live = window.cursor_position().ok();
+    let (probe_x, probe_y) = live
+        .map(|p| (p.x, p.y))
+        .unwrap_or((hook_x, hook_y));
+    // 2) 光标所在监视器优先（隐藏窗口的 current_monitor 可能停留在旧显示器）
+    let monitor = app
+        .monitor_from_point(probe_x, probe_y)
+        .ok()
+        .flatten()
+        .or_else(|| window.current_monitor().ok().flatten())?;
+    let scale = monitor.scale_factor();
+    let mx = monitor.position().x as f64 / scale;
+    let my = monitor.position().y as f64 / scale;
+    let mw = monitor.size().width as f64 / scale;
+    let mh = monitor.size().height as f64 / scale;
+    // 3) 光标在该监视器尺度下的逻辑坐标；窗口逻辑尺寸同口径折算
+    let (cxl, cyl) = live
+        .map(|p| (p.x / scale, p.y / scale))
+        .unwrap_or((hook_x, hook_y));
+    let w = size.width as f64 / scale;
+    let h = size.height as f64 / scale;
+    let mut px = cxl - cut_inset;
+    let mut py = cyl - cut_inset;
+    if px + w > mx + mw {
+        px = mx + mw - w;
+    }
+    if py + h > my + mh {
+        py = my + mh - h;
+    }
+    if px < mx {
+        px = mx;
+    }
+    if py < my {
+        py = my;
+    }
+    Some((px, py))
+}
+
+/// 圆角补偿：卡片 rounded-xl=12px，圆弧使可见角尖相对理想直角内退 cut = r − r/√2 ≈ 3.51px
+const CUT_INSET: f64 = 12.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
+
 /// 启动 keyboard-hook 子进程；失败返回 false 交给看门狗重试
 fn launch_hook(app: &tauri::AppHandle) -> bool {
     let args = hook_args(app);
@@ -134,41 +191,20 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                         // 同文本重复 Cmd+C+C 由前端 lastTextRef 直接重看上次翻译，无需后端缓存）
                         if text.trim().is_empty() {
                             eprintln!("[main] 剪贴板为空，跳过翻译");
-                            // 空剪贴板轻提示：与划词弹窗同款跟生成——左上角锚光标
-                            // （圆角切点内退补偿 CUT_INSET，越界按所在屏钳制），约 1 秒自动消失
+                            // 空剪贴板轻提示：与划词弹窗同款跟随生成——左上角锚光标
+                            // （圆角切点内退补偿 CUT_INSET，越界按所在屏钳制），约 1.2 秒自动消失
                             if let Some(toast) = app.get_webview_window("toast") {
-                                let monitor = app
-                                    .monitor_from_point(cursor_x, cursor_y)
-                                    .ok()
-                                    .flatten()
-                                    .or_else(|| toast.current_monitor().ok().flatten());
-                                if let Some(m) = monitor {
-                                    const CUT_INSET: f64 =
-                                        12.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
-                                    let scale = m.scale_factor();
-                                    let size = toast
-                                        .inner_size()
-                                        .unwrap_or(tauri::PhysicalSize::new(280, 64));
-                                    let mx = m.position().x as f64 / scale;
-                                    let my = m.position().y as f64 / scale;
-                                    let mw = m.size().width as f64 / scale;
-                                    let mh = m.size().height as f64 / scale;
-                                    let w = size.width as f64 / scale;
-                                    let h = size.height as f64 / scale;
-                                    let mut px = cursor_x - CUT_INSET;
-                                    let mut py = cursor_y - CUT_INSET;
-                                    if px + w > mx + mw {
-                                        px = mx + mw - w;
-                                    }
-                                    if py + h > my + mh {
-                                        py = my + mh - h;
-                                    }
-                                    if px < mx {
-                                        px = mx;
-                                    }
-                                    if py < my {
-                                        py = my;
-                                    }
+                                let size = toast
+                                    .inner_size()
+                                    .unwrap_or(tauri::PhysicalSize::new(280, 64));
+                                if let Some((px, py)) = anchor_position(
+                                    &app,
+                                    &toast,
+                                    cursor_x,
+                                    cursor_y,
+                                    size,
+                                    CUT_INSET,
+                                ) {
                                     let _ = toast.set_position(LogicalPosition::new(px, py));
                                 }
                                 let _ = toast.show();
@@ -182,51 +218,20 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
                         }
                         eprintln!("[main] display_text len={}", text.len());
                         if let Some(window) = app.get_webview_window("translate") {
-                            // 光标所在显示器优先（隐藏窗口的 current_monitor 可能停留在旧显示器，
-                            // 造成跨屏时按错误边界钳制 → 弹窗位置偏差的根因）
-                            let monitor = app
-                                .monitor_from_point(cursor_x, cursor_y)
-                                .ok()
-                                .flatten()
-                                .or_else(|| window.current_monitor().ok().flatten());
-                            if let Some(monitor) = monitor {
-                                let scale = monitor.scale_factor();
-                                let monitor_logical_width = monitor.size().width as f64 / scale;
-                                let monitor_logical_height = monitor.size().height as f64 / scale;
-                                let monitor_logical_x = monitor.position().x as f64 / scale;
-                                let monitor_logical_y = monitor.position().y as f64 / scale;
-                                let size = window
-                                    .inner_size()
-                                    .unwrap_or(tauri::PhysicalSize::new(480, 360));
-                                // 弹窗逻辑尺寸按「光标所在显示器」的 scale 折算，避免跨屏 scale 混算偏差
-                                let popup_logical_width = size.width as f64 / scale;
-                                let popup_logical_height = size.height as f64 / scale;
-                                // 锚定光标本身的角点：弹窗左上角压在光标上，主体向右下展开。
-                                // 圆角补偿：卡片 rounded-xl=12px，圆弧使可见角尖相对理想直角
-                                // 内退 cut = r − r/√2 ≈ 3.51px，按此补偿让「视觉角尖」对准光标
-                                const CUT_INSET: f64 = 12.0 * (1.0 - std::f64::consts::FRAC_1_SQRT_2);
-                                let mut px = cursor_x - CUT_INSET;
-                                let mut py = cursor_y - CUT_INSET;
-                                if px + popup_logical_width > monitor_logical_x + monitor_logical_width
-                                {
-                                    px =
-                                        monitor_logical_x + monitor_logical_width - popup_logical_width;
-                                }
-                                if py + popup_logical_height
-                                    > monitor_logical_y + monitor_logical_height
-                                {
-                                    py = monitor_logical_y + monitor_logical_height
-                                        - popup_logical_height;
-                                }
-                                if px < monitor_logical_x {
-                                    px = monitor_logical_x;
-                                }
-                                if py < monitor_logical_y {
-                                    py = monitor_logical_y;
-                                }
-                                window
-                                    .set_position(LogicalPosition::new(px, py))
-                                    .unwrap_or_default();
+                            let size = window
+                                .inner_size()
+                                .unwrap_or(tauri::PhysicalSize::new(480, 360));
+                            // 弹窗锚定光标左上角（圆角切点内退 + 越界按光标所在屏钳制），
+                            // 光标坐标取主进程实时值（同 toast，见 anchor_position）
+                            if let Some((px, py)) = anchor_position(
+                                &app,
+                                &window,
+                                cursor_x,
+                                cursor_y,
+                                size,
+                                CUT_INSET,
+                            ) {
+                                let _ = window.set_position(LogicalPosition::new(px, py));
                             }
                             let _ = window.show();
                             let _ = window.set_focus();
@@ -285,10 +290,8 @@ fn start_hook_watchdog(app: tauri::AppHandle) {
                 None => true,
             }
         };
-        if dead {
-            if !launch_hook(&app) {
-                eprintln!("[main] keyboard-hook 看门狗: 本次拉起失败，3 秒后重试");
-            }
+        if dead && !launch_hook(&app) {
+            eprintln!("[main] keyboard-hook 看门狗: 本次拉起失败，3 秒后重试");
         }
     });
 }

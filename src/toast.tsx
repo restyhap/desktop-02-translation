@@ -1,9 +1,9 @@
 /**
  * toast.tsx — 空剪贴板轻提示入口（独立透明小窗 label="toast"）
  *
- * Rust 侧剪贴板为空时：把本窗口左上角锚到光标处（圆角切点内退，与弹窗同口径）→ show → 约 1.1s 后 hide。
+ * Rust 侧剪贴板为空时：把本窗口左上角锚到光标处（圆角切点内退，与弹窗同口径）→ show → 约 1.2s 后 hide。
  * 本组件即窗口内容本体：铺满整个窗口（rounded-xl 与弹窗同款），保证「窗口左上角=胶囊圆角尖」；
- * 不抢焦点（focusable:false）、不与弹窗逻辑冲突。
+ * 不抢焦点（focusable:false）、不与弹窗逻辑冲突；前端另在挂载时 hide 兜底（防状态恢复幽灵显示）。
  */
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
@@ -18,25 +18,12 @@ document.body.style.background = "transparent";
 function CenterToast() {
   const { t } = useAppLocale();
 
-  // 每次 Rust show 唤出后 1 秒自动隐藏（窗口本身 visible:false，安全兜底）
+  // 生命周期完全由 Rust 侧控制：show() → 约 1.2s 后 hide()。
+  // 前端侧兜底：挂载时强制隐藏一次，杜绝任何路径下（如历史窗口状态被恢复）
+  // 出现「启动即显示、无人 hide」的幽灵 toast。
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    getCurrentWindow()
-      .listen("show-toast", () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => {
-          timer = null;
-          getCurrentWindow().hide().catch(() => {});
-        }, 1000);
-      })
-      .then((fn) => {
-        unlisten = fn;
-      });
-    return () => {
-      if (unlisten) unlisten();
-      if (timer) clearTimeout(timer);
-    };
+    const win = getCurrentWindow();
+    win.hide().catch(() => {});
   }, []);
 
   return (

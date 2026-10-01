@@ -12,15 +12,17 @@
  * - 翻译主流程：useTranslationState.translateAndApply（含 silent 的词典联动翻译）
  * - 历史回填：setResult + input/语言/引擎回填
  * - 设置：getSettings 深合并默认值；单项改动 saveSettings 全量落库；主题三态 useTheme
+ 
  */
 import { useCallback, useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { dictBuild, dictHasDb as hasDictDb, dictLookup, listDicts, type DictInfo } from "@/storage/dict";
-import { getDBStatus, initDB, getTranslations, listApiKeys, getSettings, saveSettings } from "@/storage";
+import { getDBStatus, initDB, getTranslations, listApiKeys, getSettings, saveSettings, getVocabularyWords, deleteVocabularyWord } from "@/storage";
 import { mapRecordToUi } from "@/storage/translation";
 import { Sidebar, type ViewTab } from "@/components/Sidebar";
 import { PageHeader } from "@/components/PageHeader";
-import { LanguagesIcon } from "@/components/icons";
+import { TitleBar } from "@/components/TitleBar";
+import { LanguagesIcon, StarIcon } from "@/components/icons";
 import { TranslationInput, type EngineChip } from "@/components/TranslationInput";
 import { TranslationResultPanel } from "@/components/TranslationResultPanel";
 import { SaveToVocabDialog } from "@/components/SaveToVocabDialog";
@@ -32,7 +34,9 @@ import { DictionaryPanel } from "@/pages/DictionaryPanel";
 import { SettingsPanel } from "@/pages/SettingsPanel";
 import { useTranslationState } from "@/hooks/useTranslationState";
 import { useTheme } from "@/hooks/useTheme";
+import { useToast } from "@/components/ui/Toast";
 import { useAppLocale } from "@/lib/i18n";
+
 import type { DictEntry } from "@/components/DictEntryView";
 import type { AppSettings } from "@/types/settings";
 import type { Language, TranslationResult } from "@/types/translation";
@@ -49,6 +53,7 @@ function mergeSettings(raw: Partial<AppSettings>): AppSettings {
       show_main: raw.shortcuts?.show_main ?? DEFAULT_SETTINGS.shortcuts.show_main,
     },
     llm: { ...DEFAULT_SETTINGS.llm, ...raw.llm },
+    tts: { ...DEFAULT_SETTINGS.tts, ...raw.tts },
   };
 }
 
@@ -86,10 +91,6 @@ function App() {
 
   /* ---------- 数据库初始化（对齐 src 启动流程，语义零改动） ---------- */
   const [dbError, setDbError] = useState<string | null>(null);
-  /** 收藏入生词本弹窗草稿（原文+译文），非空时渲染 SaveToVocabDialog */
-  const [favDraft, setFavDraft] = useState<{ text: string; translation: string } | null>(
-    null,
-  );
   useEffect(() => {
     let cancelled = false;
 
@@ -192,8 +193,64 @@ function App() {
     loading: translationLoading,
     error: translationError,
     historyVersion,
+    setHistoryVersion,
     translateAndApply,
   } = useTranslationState();
+  const { showToast } = useToast();
+
+  /** 收藏入生词本弹窗草稿（原文+译文），非空时渲染 SaveToVocabDialog */
+  const [favDraft, setFavDraft] = useState<{ text: string; translation: string } | null>(
+    null,
+  );
+  /** 当前翻译结果是否已入生词本（收藏态真实来源：查生词本是否存在 sourceText） */
+  const [favActive, setFavActive] = useState(false);
+  /** 收藏态查询令牌：翻译结果/生词本变更后重新判定 */
+  const [favCheckToken, setFavCheckToken] = useState(0);
+  /** 收藏态刷新：由当前 translationResult 是否在生词本中决定（新建记录 favorite 恒 0，不可依赖该字段） */
+  useEffect(() => {
+    let cancelled = false;
+    const src = translationResult?.sourceText?.trim();
+    if (!src) {
+      setFavActive(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const words = await getVocabularyWords();
+        if (!cancelled) setFavActive(words.some((w) => w.word.trim() === src));
+      } catch (err) {
+        console.error("[App] 收藏态查询失败:", err);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [translationResult?.sourceText, favCheckToken]);
+
+  /** 收藏按钮点击：未收藏→开弹窗；已收藏→从生词本移除该条目（取消收藏） */
+  const handleFavClick = useCallback(() => {
+    if (!translationResult) return;
+    const src = translationResult.sourceText.trim();
+    if (!src) return;
+    if (favActive) {
+      // 已收藏：取消——删除生词本中该词条（多分组同词时全删，保持按钮态一致）
+      void (async () => {
+        try {
+          const words = await getVocabularyWords();
+          const matched = words.filter((w) => w.word.trim() === src);
+          for (const w of matched) await deleteVocabularyWord(w.id);
+          setFavActive(false);
+          setFavCheckToken((n) => n + 1);
+          showToast(t("toast.removedFromVocab"), "info");
+        } catch (err) {
+          console.error("[App] 取消收藏失败:", err);
+          showToast(err instanceof Error ? err.message : String(err), "error");
+        }
+      })();
+      return;
+    }
+    setFavDraft({ text: src, translation: translationResult.translatedText });
+  }, [translationResult, favActive, showToast, t]);
 
   const [sidebarTab, setSidebarTab] = useState<ViewTab>("translate");
   const [text, setText] = useState("");
@@ -241,6 +298,8 @@ function App() {
     setCurrentEngine(item.engine);
     setDictEntry(null);
     setDictError(null);
+    // 对齐 src：点击历史后切回主页展示回填结果
+    setSidebarTab("translate");
   };
 
   // 右侧输入框联动: 单词 → 查词典显示释义; 段落 → 翻译（对齐 src handleDictTranslate 判词规则）
@@ -302,7 +361,10 @@ function App() {
   }
 
   return (
-    <div className="flex h-full w-full bg-bg text-ink">
+    <div className="relative flex h-full w-full bg-bg pt-7 text-ink">
+      {/* 自绘标题栏：绝对定位铺满顶部（TitleBar 内部自带 absolute），pt-7 为其预留 28px。
+          用绝对定位而非多包一层 flex，是为了不给下面 ~170 行 JSX 引入无谓缩进变动。 */}
+      <TitleBar />
       <Sidebar
         tab={sidebarTab}
         onTab={setSidebarTab}
@@ -325,6 +387,7 @@ function App() {
             onDictsRebuilt={loadDicts}
             onDictsRebuilding={setDictRebuilding}
             onEnginesChanged={loadEngines}
+            onHistoryChanged={() => setHistoryVersion((v) => v + 1)}
           />
         </div>
       ) : (
@@ -332,8 +395,29 @@ function App() {
           <div className="min-h-0 flex-1 overflow-y-auto">
             {sidebarTab === "translate" && (
               <div className="rise-in mx-auto flex w-full max-w-[760px] flex-col px-6 py-10">
-                {/* 页头：统一规格（语言 chip + 翻译标题） */}
-                <PageHeader icon={<LanguagesIcon size={16} />} title={t("nav.home")} />
+                {/* 页头：统一规格（语言 chip + 翻译标题）；最右侧=收藏入生词本（放大显眼） */}
+                <PageHeader
+                  icon={<LanguagesIcon size={16} />}
+                  title={t("nav.home")}
+                  right={
+                    <button
+                      onClick={handleFavClick}
+                      disabled={!translationResult}
+                      title={favActive ? t("action.unfavorite") : t("action.favorite")}
+                      aria-label={favActive ? t("action.unfavorite") : t("action.favorite")}
+                      aria-pressed={favActive}
+                      className={`grid h-8 w-8 cursor-pointer place-items-center rounded-md transition-colors ${
+                        !translationResult
+                          ? "cursor-not-allowed opacity-40"
+                          : favActive
+                            ? "bg-gold/10 text-gold"
+                            : "text-ink-3 hover:bg-hover hover:text-gold"
+                      }`}
+                    >
+                      <StarIcon size={16} filled={favActive} />
+                    </button>
+                  }
+                />
 
                 {/* 一体化翻译卡（与页头留一档间距，对齐历史页节奏） */}
                 <div className="mt-5">
@@ -355,25 +439,25 @@ function App() {
                   onEngineChange={setCurrentEngine}
                 />
 
-                {/* 结果区：回信卡（纯译文；词典条目走词典页） */}
-                <div className="mt-7">
+                {/* 结果区：回信卡（纯译文；词典条目走词典页）。
+                    未翻译时用「最近翻译」条带填充结果区 —— 与背景一致无底板，
+                    点击翻译后先显示"翻译中"，结果返回后被译文卡替换。 */}
+                <div className="mt-5">
                   <TranslationResultPanel
                     result={translationResult}
                     error={translationError}
                     loading={translationLoading}
-                    onFavorite={(r) =>
-                      setFavDraft({ text: r.sourceText, translation: r.translatedText })
-                    }
                     currentEngine={currentEngine}
+                    idleContent={
+                      recent.length > 0 ? (
+                        <RecentStrip
+                          recent={recent}
+                          onPick={handleHistorySelect}
+                        />
+                      ) : undefined
+                    }
                   />
                 </div>
-
-                {/* 最近历史条带（空态隐藏） */}
-                <RecentStrip
-                  recent={recent}
-                  onPick={handleHistorySelect}
-                  className="mt-10 pb-2"
-                />
               </div>
             )}
 
@@ -425,6 +509,13 @@ function App() {
                 entryError={dictError}
                 onLookup={handleDictLookup}
                 onCloseEntry={() => setDictEntry(null)}
+                onFavoriteEntry={(word) =>
+                  setFavDraft({
+                    text: word,
+                    // 释义取当前词条的 definition 原文（若为空回退为词条名）
+                    translation: dictEntry?.definition?.trim() || word,
+                  })
+                }
               />
             )}
           </div>
@@ -436,12 +527,19 @@ function App() {
         </div>
       )}
 
-      {/* 收藏入生词本弹窗（详情展开 + 分组选择） */}
+      {/* 收藏入生词本弹窗（详情展开 + 分组选择 + 就地新建组）：
+          absolute inset-0 相对根容器定位，整窗铺满遮罩 */}
       {favDraft && (
         <SaveToVocabDialog
           text={favDraft.text}
           translation={favDraft.translation}
           onClose={() => setFavDraft(null)}
+          onSaved={() => {
+            // 收藏成功：立即点亮按钮（金色填充）
+            setFavActive(true);
+            setFavCheckToken((n) => n + 1);
+            showToast(t("toast.addedToVocab"), "success");
+          }}
         />
       )}
     </div>

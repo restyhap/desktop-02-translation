@@ -19,9 +19,9 @@ import type { AppSettings } from "@/types/settings";
 import type { Language, TranslationResult } from "@/types/translation";
 import { DEFAULT_SETTINGS } from "@/types/settings";
 import { useAppLocale } from "@/lib/i18n";
-import { Select } from "@/components/ui/Misc";
 import { ToastProvider, useToast } from "@/components/ui/Toast";
 import { TTSButton } from "@/components/TTSButton";
+import { TranslateChipsRow } from "@/components/TranslateChipsRow";
 import { CopyIcon, StarIcon, XIcon } from "@/components/icons";
 import type { EngineChip } from "@/components/TranslationInput";
 
@@ -370,31 +370,8 @@ function PopupCard({
           onPointerDown={onStartDrag}
         >
           <span className="text-[10px] uppercase tracking-wider text-ink-3">{t("popup.title")}</span>
-          <span onPointerDown={(e) => e.stopPropagation()}>
-            <Select
-              aria-label={t("popup.engineAria")}
-              title={`${t("popup.engineAria")} · ←/→`}
-              onKeyDown={(e) => {
-                if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-                if (engines.length < 2) return;
-                e.preventDefault();
-                const idx = engines.findIndex((x) => x.service === engine);
-                const dir = e.key === "ArrowRight" ? 1 : -1;
-                const next = engines[(idx + dir + engines.length) % engines.length];
-                if (next && next.service !== engine) onEngineChange(next.service);
-              }}
-              value={engine}
-              onChange={(e) => {
-                const next = e.target.value;
-                onEngineChange(next);
-              }}
-              className="h-6 border-none bg-bg-inset pr-6 text-[11px] text-ink-2"
-            >
-              {engines.map((e) => (
-                <option key={e.service} value={e.service}>{e.label}</option>
-              ))}
-            </Select>
-          </span>
+          {/* 引擎切换并入标题行：inline 变体，不换行、超宽截断、阻止冒泡防拖拽 */}
+          <TranslateChipsRow inline engine={engine} engines={engines} onEngineChange={onEngineChange} />
           <button
             ref={closeBtnRef}
             onPointerDown={(e) => e.stopPropagation()}

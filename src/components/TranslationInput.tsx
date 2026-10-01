@@ -71,7 +71,7 @@ export function TranslationInput({
   };
 
   return (
-    <div className="rise-in rounded-xl border border-line bg-bg-elevated shadow-[var(--shadow-card)]">
+    <div className="rise-in rounded-xl border border-line-strong bg-bg-elevated shadow-[var(--shadow-lift)]">
       {/* 大号输入区（无内框） */}
       <textarea
         value={text}

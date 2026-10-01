@@ -1,4 +1,3 @@
-use std::fs;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -12,8 +11,21 @@ mod settings_store;
 mod translation;
 mod vocabulary_store;
 
-use app::config::{GeneralConfig, load_general_config, load_shortcuts};
+use app::config::{load_general_config, load_shortcuts, save_general_config};
 use app::keyboard_hook::{KeyboardHookProcess, spawn_keyboard_hook};
+
+/// 读取设置里的历史保存时效（general.historyRetentionDays 天），缺失/非法一律回落默认 30 天。
+/// 与前端 DEFAULT_SETTINGS.general.historyRetentionDays 保持一致。
+fn history_retention_days(app: &tauri::AppHandle) -> Result<i64, String> {
+    const DEFAULT_DAYS: i64 = 30;
+    let all = settings_store::SettingsStore::get_all(app)?;
+    let days = all
+        .get("general")
+        .and_then(|g| g.get("historyRetentionDays"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(DEFAULT_DAYS);
+    Ok(if days < 0 { 0 } else { days })
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,11 +39,13 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(
+            // 注意：toast 与 translate 都是运行时 show/hide 的临时小窗，
+            // 必须加入 denylist —— 否则插件会把上次退出时的 visible:true 恢复，
+            // 导致「程序启动后、未按快捷键，toast 就凭空显示」且永不自动隐藏
             tauri_plugin_window_state::Builder::default()
-                .with_denylist(&["translate"])
+                .with_denylist(&["translate", "toast"])
                 .build(),
         )
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
@@ -42,10 +56,25 @@ pub fn run() {
             let initial_shortcuts = load_shortcuts(app.handle());
             app.manage(Mutex::new(initial_shortcuts));
 
+            // MOSS-TTS 引擎缓存（进程级单实例，避免重复加载 7 个 ONNX session）
+            app.manage(commands::tts::TtsEngineCache::default());
+
             spawn_keyboard_hook(app.handle().clone());
 
             // 初始化翻译引擎表
             db::EngineManager::init(app.handle()).ok();
+
+            // 启动即清理过期历史（设置页「历史保存时效」，默认 30 天；收藏记录豁免）。
+            // 读取失败或清理出错都只记日志，不阻断启动。
+            match history_retention_days(app.handle()) {
+                Ok(days) => match history_store::HistoryStore::purge_older_than(app.handle(), days)
+                {
+                    Ok(0) => {}
+                    Ok(n) => eprintln!("[history] 已清理 {n} 条过期历史（保留 {days} 天）"),
+                    Err(e) => eprintln!("[history] 清理过期历史失败: {e}"),
+                },
+                Err(e) => eprintln!("[history] 读取历史保存时效失败，跳过清理: {e}"),
+            }
 
             let initial_general = load_general_config(app.handle());
             app.manage(Mutex::new(initial_general.clone()));
@@ -69,18 +98,14 @@ pub fn run() {
                         let mut guard = last_save.lock().unwrap();
                         if guard.elapsed() >= std::time::Duration::from_millis(400) {
                             *guard = std::time::Instant::now();
-                            if let Ok(data) = fs::read_to_string(app::config::get_settings_path(&handle)) {
-                                if let Ok(mut config) = serde_json::from_str::<GeneralConfig>(&data)
-                                {
-                                    config.translate_size = Some((
-                                        logical.width.max(1.0) as u32,
-                                        logical.height.max(1.0) as u32,
-                                    ));
-                                    if let Ok(json) = serde_json::to_string_pretty(&config) {
-                                        let _ = fs::write(app::config::get_settings_path(&handle), json);
-                                    }
-                                }
-                            }
+                            // 直接读整份配置（文件缺失时 load_general_config 返回默认值），
+                            // 避免「先读文件、失败即跳过」导致首次调整尺寸永不落盘
+                            let mut config = load_general_config(&handle);
+                            config.translate_size = Some((
+                                logical.width.max(1.0) as u32,
+                                logical.height.max(1.0) as u32,
+                            ));
+                            save_general_config(&handle, &config);
                         }
                     }
                 });
@@ -130,17 +155,6 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            #[cfg(desktop)]
-            let _ = app.handle().plugin(tauri_plugin_updater::Builder::new().build());
-
-            #[cfg(desktop)]
-            {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    commands::translation::check_update_auto(handle).await;
-                });
-            }
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -161,16 +175,17 @@ pub fn run() {
             commands::engines::delete_api_key_cmd,
             commands::engines::reorder_api_keys_cmd,
             commands::translation::translate_cmd,
-            commands::translation::check_update,
             commands::settings::get_all_settings_cmd,
             commands::settings::save_all_settings_cmd,
             commands::history::translate_history_cmd,
             commands::history::get_translations_cmd,
             commands::history::toggle_favorite_cmd,
             commands::history::delete_translation_cmd,
+            commands::history::purge_history_cmd,
             commands::vocabulary::get_vocabulary_groups_cmd,
             commands::vocabulary::get_vocabulary_words_cmd,
             commands::vocabulary::add_vocabulary_group_cmd,
+            commands::vocabulary::ensure_default_vocabulary_group_cmd,
             commands::vocabulary::delete_vocabulary_group_cmd,
             commands::vocabulary::add_vocabulary_word_cmd,
             commands::vocabulary::delete_vocabulary_word_cmd,
@@ -186,6 +201,12 @@ pub fn run() {
             commands::dictionary::dict_list_cmd,
             commands::dictionary::get_dict_paths_cmd,
             commands::dictionary::save_dict_paths_cmd,
+            commands::tts::tts_model_status_cmd,
+            commands::tts::tts_model_download_cmd,
+            commands::tts::tts_model_delete_cmd,
+            commands::tts::tts_synthesize_cmd,
+            commands::tts::tts_list_voices_cmd,
+            commands::tts::tts_set_voice_cmd,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

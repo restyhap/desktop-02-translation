@@ -9,6 +9,10 @@
   --bg: #f7f7f5;
   --bg-elevated: #ffffff;
   --bg-inset: #efefec;
+
+  /* 品牌 logo 徽章底色（浅色主题用品牌靛蓝，压在 #f7f7f5 上对比度约 14.9:1） */
+  --logo-tile: #1E1B4B;
+  
   --bg-hover: rgba(24, 24, 27, 0.045);
   --bg-active: rgba(24, 24, 27, 0.08);
 
@@ -47,6 +51,12 @@
   --bg: #17202d;
   --bg-elevated: #1d2736;
   --bg-inset: #131a26;
+
+  /* 暗色下 --bg 是 #17202d，与品牌靛蓝 #1E1B4B 亮度几乎相同（对比度仅约 1.02:1，
+     徽章会整块"隐身"）。这里上提到 #3A4180（约 1.75:1），既保住"深底 + 浅色 D/T"
+     的品牌观感，又能看出方形轮廓；太亮会让白色笔画失去反差。 */
+  --logo-tile: #3A4180;
+  
   --bg-hover: rgba(226, 224, 218, 0.055);
   --bg-active: rgba(226, 224, 218, 0.09);
 
@@ -80,6 +90,7 @@
   --color-bg: var(--bg);
   --color-bg-elevated: var(--bg-elevated);
   --color-bg-inset: var(--bg-inset);
+  
   --color-hover: var(--bg-hover);
   --color-active: var(--bg-active);
   --color-ink: var(--text-1);

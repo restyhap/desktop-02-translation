@@ -22,7 +22,7 @@ import type { DictEntry } from "@/components/DictEntryView";
 import { useAppLocale, type TFn, type UiLocale } from "@/lib/i18n";
 import { DictEntryView } from "@/components/DictEntryView";
 import { EmptyState } from "@/components/ui/Misc";
-import { BookIcon, SearchIcon } from "@/components/icons";
+import { BookIcon, SearchIcon, StarIcon } from "@/components/icons";
 import { PageHeader } from "@/components/PageHeader";
 
 /** 词条数显示：zh/ko 用「万」，其余语言用「k」（对齐各自数词习惯） */
@@ -54,11 +54,13 @@ interface DictionaryPanelProps {
   entryError: string | null;
   onLookup: (word: string) => void;
   onCloseEntry: () => void;
+  /** 收藏当前词条入生词本（宿主打开 SaveToVocabDialog）；无词条时禁用 */
+  onFavoriteEntry?: (word: string) => void;
 }
 
 export function DictionaryPanel({
   dicts, activeDict, hasDb, rebuilding = false, buildingId, buildProgress,
-  onSelect, onBuild, onReorder, entry, entryLoading, entryError, onLookup, onCloseEntry,
+  onSelect, onBuild, onReorder, entry, entryLoading, entryError, onLookup, onCloseEntry, onFavoriteEntry,
 }: DictionaryPanelProps) {
   const { t, locale } = useAppLocale();
   const [query, setQuery] = useState("");
@@ -142,11 +144,26 @@ export function DictionaryPanel({
 
   return (
     <div className="mx-auto flex h-full w-full max-w-[860px] flex-col px-8 py-10">
-      {/* 页头：统一规格 */}
+      {/* 页头：统一规格；最右侧=收藏当前词条入生词本（无词条时禁用置灰） */}
       <PageHeader
         icon={<BookIcon size={16} />}
         title={t("dict.pageTitle")}
         hint={t("dict.pageHint")}
+        right={
+          <button
+            onClick={() => entry?.word && onFavoriteEntry?.(entry.word)}
+            disabled={!entry?.word || !onFavoriteEntry}
+            title={t("action.favorite")}
+            aria-label={t("action.favorite")}
+            className={`grid h-8 w-8 cursor-pointer place-items-center rounded-md transition-colors ${
+              !entry?.word
+                ? "cursor-not-allowed opacity-40"
+                : "text-ink-3 hover:bg-hover hover:text-gold"
+            }`}
+          >
+            <StarIcon size={16} />
+          </button>
+        }
       />
 
       {/* 词典选择 chips + 重建：单行横向滚动 + 拖拽排序（顺序经 App 落 settings.dictOrder） */}

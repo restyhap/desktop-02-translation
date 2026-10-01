@@ -14,6 +14,16 @@ pub fn delete_vocabulary_group_cmd(app: tauri::AppHandle, id: String) -> Result<
     VocabularyStore::delete_group(&app, &id)
 }
 
+/// 幂等确保默认分组（收藏兜底组）：已存在同名则返回其 id，不重复创建
+#[tauri::command]
+pub fn ensure_default_vocabulary_group_cmd(
+    app: tauri::AppHandle,
+    name: String,
+    color: String,
+) -> Result<String, String> {
+    VocabularyStore::ensure_default_group(&app, &name, &color)
+}
+
 #[tauri::command]
 pub fn add_vocabulary_word_cmd(
     app: tauri::AppHandle,

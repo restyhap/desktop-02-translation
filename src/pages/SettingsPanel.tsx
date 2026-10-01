@@ -7,11 +7,10 @@
  *   getDictPaths/saveDictPaths（+ plugin-dialog 选目录）、
  *   listApiKeys/addApiKey/deleteApiKey/reorderApiKeys/addEngine/deleteEngine
  *   （@dnd-kit/react 拖拽排序沿用 src 依赖 + AddKeyModal 含默认引擎项）、
- *   getShortcuts/updateShortcuts、check_update（invoke）。
+ *   getShortcuts/updateShortcuts。
  * 界面语言：UI_LOCALES 九语切换（LocaleProvider）。
  */
 import { useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
 import { useSortable } from "@dnd-kit/react/sortable";
 import { arrayMove } from "@dnd-kit/helpers";
@@ -24,12 +23,26 @@ import { useToast } from "@/components/ui/Toast";
 import { Select } from "@/components/ui/Misc";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { XIcon } from "@/components/icons";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  deleteTtsModel,
+  downloadTtsModel,
+  getTtsStatus,
+  listTtsVoices,
+  setTtsVoice,
+  type TtsDownloadProgress,
+  type TtsStatus,
+  type TtsVoiceInfo,
+} from "@/storage";
+import { playPreview, stopPreview, type PreviewEngine } from "@/lib/ttsPreview";
 
 const SECTIONS = [
   { id: "general", tKey: "settings.sectionGeneral" },
   { id: "translation", tKey: "settings.sectionTranslation" },
   { id: "dict", tKey: "settings.sectionDict" },
   { id: "apis", tKey: "settings.sectionApis" },
+  // 语音分节暂不启用（MOSS 效果不理想，先不发布）：恢复时取消本行注释 + 下方 JSX 调用
+  // { id: "voice", tKey: "settings.sectionVoice" },
   { id: "appearance", tKey: "settings.sectionAppearance" },
   { id: "shortcuts", tKey: "settings.sectionShortcuts" },
 ] as const;
@@ -62,6 +75,7 @@ import {
   updateShortcuts,
   getShortcuts,
   listApiKeys,
+  purgeOldHistory,
   reorderApiKeys,
 } from "@/storage";
 import { dictBuild } from "@/storage/dict";
@@ -98,6 +112,411 @@ function Switch({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
+/* ==================== 语音分节（MOSS-TTS） ==================== */
+
+/** 语言代码 → BCP-47（与 TTSButton 对齐） */
+function mapLang(lang: string): string {
+  if (lang.startsWith("en")) return "en-US";
+  if (lang.startsWith("zh")) return "zh-CN";
+  return lang;
+}
+
+/** 格式化字节数 → MB 字符串 */
+function fmtMB(bytes: number): string {
+  return (bytes / 1024 / 1024).toFixed(0);
+}
+
+/** 语音分节：模型状态（下载/删除）+ A/B 试听 */
+/** 音色分组（与 Rust VOICES 的 group 字段一致） */
+const VOICE_GROUPS = [
+  { id: "cn_male", tKey: "settings.ttsVoiceGroupCnMale" },
+  { id: "cn_female", tKey: "settings.ttsVoiceGroupCnFemale" },
+  { id: "en_male", tKey: "settings.ttsVoiceGroupEnMale" },
+  { id: "en_female", tKey: "settings.ttsVoiceGroupEnFemale" },
+  { id: "jp_female", tKey: "settings.ttsVoiceGroupJpFemale" },
+] as const;
+
+// 语音分节组件：当前未被调用（分节已注释停用），故导出以避免 noUnusedLocals 报错。
+// 代码与 i18n key 全部保留，恢复启用只需取消 SECTIONS 与调用处注释。
+export function VoiceSection({ settings, patch }: { settings: AppSettings; patch: (fn: (draft: AppSettings) => void) => void }) {
+  const { t, choice } = useAppLocale();
+  const { showToast } = useToast();
+  const [status, setStatus] = useState<TtsStatus | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState<TtsDownloadProgress | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [playing, setPlaying] = useState<PreviewEngine | null>(null);
+  const [voices, setVoices] = useState<TtsVoiceInfo[]>([]);
+  const progressRef = useRef<TtsDownloadProgress | null>(null);
+
+  // 挂载时读取状态 + 订阅下载进度事件
+  useEffect(() => {
+    let alive = true;
+    let unlisten: UnlistenFn | null = null;
+    getTtsStatus()
+      .then((s) => {
+        if (alive) setStatus(s);
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 读取语音模型状态失败:", err);
+      });
+    listTtsVoices()
+      .then((list) => {
+        if (alive) setVoices(list);
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 读取音色列表失败:", err);
+      });
+    listen<TtsDownloadProgress>("tts-download-progress", (e) => {
+      progressRef.current = e.payload;
+      if (alive) {
+        setProgress(e.payload);
+        setDownloading(true);
+        setStatus(null);
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 订阅下载进度失败:", err);
+      });
+    return () => {
+      alive = false;
+      unlisten?.();
+      stopPreview();
+    };
+  }, []);
+
+  // 下载完成的统一处理（事件或错误路径复用）
+  const refreshStatus = () => {
+    getTtsStatus()
+      .then((s) => {
+        setStatus(s);
+        setDownloading(false);
+        setProgress(null);
+        progressRef.current = null;
+        if (s.downloaded) showToast(t("settings.ttsDownloadDone"), "success");
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 刷新语音模型状态失败:", err);
+        setDownloading(false);
+      });
+  };
+
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    listen<{ ok: boolean; message: string }>("tts-download-finished", (e) => {
+      if (e.payload.ok) {
+        refreshStatus();
+      } else {
+        setDownloading(false);
+        setProgress(null);
+        progressRef.current = null;
+        showToast(`${t("result.failed")}: ${e.payload.message}`, "error");
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 订阅下载完成事件失败:", err);
+      });
+    return () => unlisten?.();
+    // eslint 兼容：仅挂载时订阅
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const startDownload = () => {
+    setDownloading(true);
+    setProgress({ downloaded_bytes: 0, total_bytes: 1, file: "" });
+    downloadTtsModel().catch((err: unknown) => {
+      // 已下载/已有操作等错误直接反馈
+      setDownloading(false);
+      setProgress(null);
+      progressRef.current = null;
+      setStatus(null);
+      getTtsStatus().then(setStatus).catch(() => {});
+      showToast(`${t("result.failed")}: ${err instanceof Error ? err.message : String(err)}`, "error");
+    });
+  };
+
+  const doDelete = () => {
+    deleteTtsModel()
+      .then(() => {
+        setConfirmDelete(false);
+        stopPreview();
+        setPlaying(null);
+        setStatus(null);
+        getTtsStatus()
+          .then((s) => {
+            setStatus(s);
+            showToast(t("settings.ttsDeleteDone"), "success");
+          })
+          .catch(() => {});
+      })
+      .catch((err: unknown) => {
+        setConfirmDelete(false);
+        showToast(`${t("result.failed")}: ${err instanceof Error ? err.message : String(err)}`, "error");
+      });
+  };
+
+  const togglePreview = async (engine: PreviewEngine) => {
+    const text = t("settings.ttsPreviewText");
+    const lang = mapLang(choice === "system" ? navigator.language : choice);
+    if (playing === engine) {
+      stopPreview();
+      setPlaying(null);
+      return;
+    }
+    try {
+      setPlaying(engine);
+      const { voice, playbackRate, pitch, volume } = settings.tts;
+      await playPreview(engine, text, lang, () => {
+        // 自然播放结束（Web Speech onend / AudioContext onended）复位按钮态
+        if (playingRef.current === engine) setPlaying(null);
+      }, { voice, playbackRate, pitch, volume });
+    } catch (err: unknown) {
+      setPlaying(null);
+      showToast(`${t("result.failed")}: ${err instanceof Error ? err.message : String(err)}`, "error");
+    }
+  };
+
+  const changeVoice = (voice: string) => {
+    // 未下载模型时禁用
+    if (!downloaded) return;
+    setTtsVoice(voice)
+      .then(() => {
+        patch((d) => {
+          d.tts.voice = voice;
+        });
+        showToast(t("settings.ttsVoiceChanged"), "success");
+      })
+      .catch((err: unknown) => {
+        showToast(`${t("settings.ttsVoiceFailed")}: ${String(err)}`, "error");
+      });
+  };
+  const playingRef = useRef<PreviewEngine | null>(null);
+  playingRef.current = playing;
+
+  const pct =
+    progress && progress.total_bytes > 0
+      ? Math.min(100, Math.round((progress.downloaded_bytes / progress.total_bytes) * 100))
+      : 0;
+  const downloaded = status?.downloaded ?? false;
+  const sizeMB = status?.size_bytes ? fmtMB(status.size_bytes) : null;
+
+  return (
+    <div>
+      {/* 模型状态行 */}
+      <div className="flex items-center justify-between gap-4 py-3.5 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-line">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-ink">{t("settings.ttsModelTitle")}</p>
+          <p className="mt-0.5 text-xs leading-5 text-ink-3">
+            {downloading
+              ? `${t("settings.ttsStatusDownloading", { percent: String(pct) })} · ${fmtMB(progress?.downloaded_bytes ?? 0)}/${fmtMB(progress?.total_bytes ?? 0)} MB`
+              : downloaded
+                ? `${t("settings.ttsStatusDownloaded", { version: status?.version ?? "" })}${sizeMB ? ` · ${sizeMB} MB` : ""}`
+                : `${t("settings.ttsStatusNotDownloaded")}${sizeMB ? ` · ${sizeMB} MB` : ""}`}
+          </p>
+        </div>
+        <div className="shrink-0">
+          {downloading ? (
+            <div className="flex items-center gap-2" role="status" aria-live="polite">
+              <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-[2px] border-accent border-t-transparent" aria-hidden="true" />
+              <span className="w-32">
+                <span className="block h-1.5 overflow-hidden rounded-full bg-line-strong">
+                  <span className="block h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+                </span>
+              </span>
+              <span className="w-9 text-right text-[11px] tabular-nums text-ink-3">{pct}%</span>
+            </div>
+          ) : downloaded ? (
+            confirmDelete ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={doDelete}
+                  className="h-8 rounded-md bg-red px-2.5 text-xs text-accent-fg transition-colors hover:opacity-90"
+                >
+                  {t("common.confirm")}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="h-8 rounded-md border border-line px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover"
+                >
+                  {t("common.cancel")}
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmDelete(true)}
+                title={t("settings.ttsDeleteConfirm")}
+                className="h-8 rounded-md border border-line px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover hover:text-red"
+              >
+                {t("settings.ttsDeleteBtn")}
+              </button>
+            )
+          ) : (
+            <button
+              onClick={startDownload}
+              className="h-8 rounded-md bg-accent px-3 text-xs text-accent-fg transition-colors hover:bg-accent-hover"
+            >
+              {t("settings.ttsDownloadBtn")}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 音色选择行（MOSS 已下载时可用） */}
+      <div className="flex items-center justify-between gap-4 py-3.5 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-line">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-ink">{t("settings.ttsVoiceTitle")}</p>
+          <p className="mt-0.5 text-xs leading-5 text-ink-3">{t("settings.ttsVoiceHint")}</p>
+        </div>
+        <div className="shrink-0">
+          <Select
+            value={settings.tts.voice}
+            disabled={!downloaded || downloading}
+            onChange={(e) => changeVoice(e.target.value)}
+            aria-label={t("settings.ttsVoiceTitle")}
+            className="h-8 min-w-40 text-xs"
+          >
+            {VOICE_GROUPS.map((g) => (
+              <optgroup key={g.id} label={t(g.tKey)}>
+                {voices
+                  .filter((v) => v.group === g.id)
+                  .map((v) => (
+                    <option key={v.voice} value={v.voice}>
+                      {v.voice}
+                    </option>
+                  ))}
+              </optgroup>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      {/* 播放参数行（语速/音调/音量） */}
+      <div className="flex flex-col gap-3 py-3.5 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-line">
+        <div className="flex items-center justify-between gap-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium text-ink">{t("settings.ttsParamsTitle")}</p>
+            <p className="mt-0.5 text-xs leading-5 text-ink-3">{t("settings.ttsParamsHint")}</p>
+          </div>
+        </div>
+        <ParamSlider
+          label={t("settings.ttsPlaybackRate")}
+          value={settings.tts.playbackRate}
+          min={0.5}
+          max={2}
+          step={0.05}
+          display={`${settings.tts.playbackRate.toFixed(2)}×`}
+          onChange={(v) => patch((d) => { d.tts.playbackRate = v; })}
+        />
+        <ParamSlider
+          label={t("settings.ttsPitch")}
+          value={settings.tts.pitch}
+          min={0.5}
+          max={2}
+          step={0.05}
+          display={`${settings.tts.pitch.toFixed(2)}×`}
+          disabled={!!downloaded} // MOSS 无变调能力，仅系统语音生效
+          hint={t("settings.ttsPitchHint")}
+          onChange={(v) => patch((d) => { d.tts.pitch = v; })}
+        />
+        <ParamSlider
+          label={t("settings.ttsVolume")}
+          value={settings.tts.volume}
+          min={0}
+          max={1}
+          step={0.05}
+          display={`${Math.round(settings.tts.volume * 100)}%`}
+          onChange={(v) => patch((d) => { d.tts.volume = v; })}
+        />
+      </div>
+
+      {/* A/B 试听行 */}
+      <div className="flex items-center justify-between gap-4 py-3.5 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-line">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-ink">{t("settings.ttsPreviewTitle")}</p>
+          <p className="mt-0.5 text-xs leading-5 text-ink-3">「{t("settings.ttsPreviewText")}」</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={() => togglePreview("system")}
+            className={`h-8 rounded-md border px-2.5 text-xs transition-colors ${
+              playing === "system"
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-line text-ink-2 hover:bg-hover hover:text-ink"
+            }`}
+          >
+            {playing === "system" ? t("common.stop") : `${t("settings.ttsPreviewSystem")} ▸`}
+          </button>
+          <button
+            onClick={() => togglePreview("neural")}
+            disabled={!downloaded || downloading}
+            title={!downloaded ? t("settings.ttsPreviewNeuralDisabled") : undefined}
+            className={`h-8 rounded-md border px-2.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+              playing === "neural"
+                ? "border-accent bg-accent-soft text-accent"
+                : "border-line text-ink-2 hover:bg-hover hover:text-ink"
+            }`}
+          >
+            {playing === "neural" ? t("common.stop") : `${t("settings.ttsPreviewNeural")} ▸`}
+          </button>
+        </div>
+      </div>
+
+      {/* 说明行 */}
+      <div className="flex items-center gap-2 py-3.5">
+        <p className="text-xs leading-5 text-ink-3">{t("settings.ttsHint")}</p>
+      </div>
+    </div>
+  );
+}
+
+/** 播放参数滑块（语速/音调/音量，复用外观分节滑块布局） */
+function ParamSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  display,
+  hint,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  hint?: string;
+  disabled?: boolean;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="w-16 shrink-0 text-xs text-ink-2">{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="h-4 flex-1"
+        aria-label={label}
+      />
+      <span className="w-14 shrink-0 text-right text-[11px] tabular-nums text-ink-3">{display}</span>
+      {hint && <span className="shrink-0 text-[11px] text-ink-3">{hint}</span>}
+    </div>
+  );
+}
+
 /* ==================== 页面本体 ==================== */
 
 interface SettingsPanelProps {
@@ -111,13 +530,16 @@ interface SettingsPanelProps {
   onDictsRebuilding?: (v: boolean) => void;
   /** 翻译服务 增加/删除 后回调（App.loadEngines 刷新主页引擎芯片） */
   onEnginesChanged?: () => void;
+  /** 历史清理后回调（App 递增 historyVersion，让主页「最近」重新拉取） */
+  onHistoryChanged?: () => void;
 }
 
 /** 服务行展示形态：listApiKeys 基础字段 + 可选的 Key 信息 */
 type KeyRow = ApiKeyOption & { app_id?: string | null; api_key?: string };
 
-export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onDictsRebuilding, onEnginesChanged }: SettingsPanelProps) {
+export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onDictsRebuilding, onEnginesChanged, onHistoryChanged }: SettingsPanelProps) {
   const { t, choice, setChoice } = useAppLocale();
+  const { showToast } = useToast();
   const [active, setActive] = useState<string>("general");
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
@@ -125,6 +547,27 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
     const draft = structuredClone(settings);
     fn(draft);
     onChange(draft); // App 侧 saveSettings（save_all_settings_cmd）
+  };
+
+  /**
+   * 改历史保存时效：先落设置（App.onChange 内部 saveSettings），再立即清理一次。
+   * 启动时 Rust 也会清理一次，这里是为了改设置后立刻见效并给出删除条数反馈。
+   */
+  const changeRetention = async (days: number) => {
+    patch((d) => {
+      d.general.historyRetentionDays = days;
+    });
+    if (days <= 0) {
+      onHistoryChanged?.();
+      return;
+    }
+    try {
+      const removed = await purgeOldHistory(days);
+      onHistoryChanged?.();
+      showToast(t("settings.historyPurged", { count: removed }), "success");
+    } catch (err) {
+      showToast(`${t("settings.historyPurgeFailed")}: ${String(err)}`, "error");
+    }
   };
 
   // 滚动反高亮最近 section（对齐 src 的 scroll 监听 + 距离计算）
@@ -227,16 +670,22 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
               <option value="exit">{t("settings.exitApp")}</option>
             </Select>
           </Row>
-          <Row title={t("settings.checkUpdates")} hint={t("settings.checkUpdatesHint")}>
-            <div className="flex items-center gap-2">
-              <Switch
-                checked={settings.general.checkUpdates}
-                onChange={(v) => patch((d) => {
-                  d.general.checkUpdates = v;
-                })}
-              />
-              <UpdateButton />
-            </div>
+          {/* 历史保存时效：启动时与改设置时各清理一次过期非收藏记录 */}
+          <Row title={t("settings.historyRetention")} hint={t("settings.historyRetentionHint")}>
+            <Select
+              value={String(settings.general.historyRetentionDays)}
+              onChange={(e) => {
+                void changeRetention(Number(e.target.value));
+              }}
+              className="h-8 text-xs"
+            >
+              {[7, 30, 90, 180, 365].map((d) => (
+                <option key={d} value={d}>
+                  {t("settings.historyRetentionDays", { days: d })}
+                </option>
+              ))}
+              <option value={0}>{t("settings.historyRetentionForever")}</option>
+            </Select>
           </Row>
         </Section>
 
@@ -297,6 +746,15 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
             <ApiSection settings={settings} patch={patch} onEnginesChanged={onEnginesChanged} />
           </Section>
         </div>
+
+        {/* ===== 语音（MOSS-TTS 可选下载 + A/B 试听）=====
+            暂不启用：MOSS 语音效果不理想，先不发布（MOSS 引擎代码与 i18n 全部保留，
+            恢复时取消上方 SECTIONS 注释 + 解除本段注释即可）。 */}
+        {/* <div className="mt-6">
+          <Section id="voice" label={t("settings.sectionVoice")}>
+            <VoiceSection settings={settings} patch={patch} />
+          </Section>
+        </div> */}
 
         {/* ===== 外观 ===== */}
         <div className="mt-6">
@@ -399,40 +857,6 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
 }
 
 /* ==================== 子组件 ==================== */
-
-/** 检查更新按钮（check_update；结果 Toast + 按钮文本双反馈） */
-function UpdateButton() {
-  const { t } = useAppLocale();
-  const { showToast } = useToast();
-  const [status, setStatus] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const run = () => {
-    setBusy(true);
-    setStatus(null);
-    invoke<string>("check_update")
-      .then((msg) => {
-        const text = msg || t("settings.upToDate");
-        setStatus(text);
-        showToast(text, "success");
-      })
-      .catch((e: unknown) => {
-        const text = `${t("result.failed")}: ${e instanceof Error ? e.message : String(e)}`;
-        setStatus(text);
-        showToast(text, "error");
-      })
-      .finally(() => setBusy(false));
-  };
-  return (
-    <button
-      onClick={run}
-      disabled={busy}
-      className="h-8 rounded-md border border-line px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover hover:text-ink disabled:opacity-50"
-      title={t("settings.updateBtn")}
-    >
-      {busy ? t("settings.updating") : status ?? t("settings.updateBtn")}
-    </button>
-  );
-}
 
 /** 词典目录分节（getDictPaths / saveDictPaths / plugin-dialog 选目录） */
 function DictDirSection({ onDictsRebuilt, onRebuilding }: { onDictsRebuilt: () => void; onRebuilding?: (v: boolean) => void }) {

@@ -32,6 +32,15 @@ export async function deleteTranslation(id: string): Promise<void> {
   await invoke("delete_translation_cmd", { id });
 }
 
+/**
+ * 清理过期历史，返回删除条数。
+ * days <= 0 表示永久保留（Rust 侧直接返回 0，不删除）。
+ * 收藏记录不会被清理。
+ */
+export async function purgeOldHistory(days: number): Promise<number> {
+  return invoke<number>("purge_history_cmd", { days });
+}
+
 export async function saveTranslationHistory(record: TranslationRecord): Promise<void> {
   await invoke("translate_history_cmd", { translation: record });
 }
@@ -86,15 +95,15 @@ export async function addVocabularyGroup(name: string, color: string): Promise<s
   return invoke<string>("add_vocabulary_group_cmd", { name, color });
 }
 
-/** 确保存在「默认分组」（收藏兜底组）：无任何分组时自动创建，返回当前分组列表 */
+/**
+ * 确保存在「默认分组」（收藏兜底组）：已存在同名分组则复用，不重复创建。
+ * Rust 侧 ensure_default_vocabulary_group_cmd 在单连接内查+插，天然幂等（多入口并发安全）。
+ */
 export async function ensureDefaultGroup(defaultName: string): Promise<void> {
-  const groups = await getVocabularyGroups();
-  if (groups.length === 0) {
-    await addVocabularyGroup(defaultName, GROUP_COLORS_DEFAULT[0]);
-  } else if (!groups.some((g) => g.name === defaultName)) {
-    // 已有分组但无默认组：仍补一个默认组（收藏总兜底）
-    await addVocabularyGroup(defaultName, GROUP_COLORS_DEFAULT[0]);
-  }
+  await invoke<string>("ensure_default_vocabulary_group_cmd", {
+    name: defaultName,
+    color: GROUP_COLORS_DEFAULT[0],
+  });
 }
 
 const GROUP_COLORS_DEFAULT = ["#2563eb"];
@@ -282,6 +291,55 @@ export async function getSettings<T = Record<string, any>>(): Promise<T> {
 
 export async function saveSettings(settings: Record<string, any>): Promise<void> {
   await invoke("save_all_settings_cmd", { settings });
+}
+
+// ==================== 语音模型（MOSS-TTS） ====================
+
+export interface TtsStatus {
+  downloaded: boolean;
+  version: string | null;
+  size_bytes: number | null;
+}
+
+export interface TtsDownloadProgress {
+  downloaded_bytes: number;
+  total_bytes: number;
+  file: string;
+}
+
+/** 查询语音模型下载状态（目录完整性由 Rust 侧按文件清单校验） */
+export async function getTtsStatus(): Promise<TtsStatus> {
+  return invoke("tts_model_status_cmd");
+}
+
+/** 开始后台下载（hf-mirror 镜像），进度经事件 tts-download-progress 推送 */
+export async function downloadTtsModel(): Promise<void> {
+  await invoke("tts_model_download_cmd");
+}
+
+/** 删除语音模型（完全可逆，删除后可再次下载） */
+export async function deleteTtsModel(): Promise<void> {
+  await invoke("tts_model_delete_cmd");
+}
+
+/** 合成试听 PCM（48kHz 双声道交错 f32）。voice 为空时用默认 Junhao；模型未下载时 Rust 返回明确错误 */
+export async function ttsSynthesize(text: string, voice?: string): Promise<number[]> {
+  return invoke("tts_synthesize_cmd", { text, voice: voice ?? null });
+}
+
+/** 内置音色清单（18 个；voice 为 set_voice 所需名字，group 供前端分组） */
+export interface TtsVoiceInfo {
+  voice: string;
+  group: string;
+}
+
+export async function listTtsVoices(): Promise<TtsVoiceInfo[]> {
+  return invoke("tts_list_voices_cmd");
+}
+
+/** 切换当前音色（引擎已加载则即时生效；未下载模型返回错误） */
+export async function setTtsVoice(voice: string): Promise<void> {
+  await invoke("tts_set_voice_cmd", { voice });
 }
 
 export const store = new Store();
