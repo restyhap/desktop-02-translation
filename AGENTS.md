@@ -22,7 +22,7 @@ Tauri 2 + React 19 桌面划词翻译应用（macOS；aarch64 + Intel x64 双架
 
 - 质量门：`pnpm typecheck` + `cargo check`（涉 Intel 须双 target：`cargo check --target x86_64-apple-darwin`）+ `cargo clippy --all-targets -- -D warnings`
 - 一键发布：仓库根 `bash release.sh`（凭据在 `~/.config/release-tokens/`，勿提交仓库）
-- keyboard-hook 有 PING/PONG 心跳自愈协议（自启动早期事件 tap 失灵场景），动 hook 相关代码先读 `agents/自启动与快捷键.md`
+- keyboard-hook 有 PING/PONG 心跳自愈协议（自启动早期事件 tap 失灵场景），动 hook 相关代码先读 `.opencode/agents/自启动与快捷键.md`
 - moss-tts-nano 被 cfg 门控排除出 Intel 构建（因 ort-sys 无 x86_64-macos 预编译库）
 - 用户数据全在 app 包外（`~/Library/Application Support` 等），替换 .app 无损
 - 新增 i18n key 必须九语齐备（zh/en/de/fr/es/it/pt/ru/ko）
