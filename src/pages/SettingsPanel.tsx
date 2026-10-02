@@ -24,6 +24,7 @@ import { Select } from "@/components/ui/Misc";
 import { ShortcutRecorder } from "@/components/ShortcutRecorder";
 import { XIcon } from "@/components/icons";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { enable as enableAutostart, disable as disableAutostart } from "@tauri-apps/plugin-autostart";
 import {
   deleteTtsModel,
   downloadTtsModel,
@@ -653,9 +654,21 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
           <Row title={t("settings.launchStartup")} hint={t("settings.launchStartupHint")}>
             <Switch
               checked={settings.general.launchAtStartup}
-              onChange={(v) => patch((d) => {
-                d.general.launchAtStartup = v;
-              })}
+              onChange={(v) => {
+                // 先调系统登录项 enable/disable，以结果为准回写设置（失败弹 toast）
+                (v ? enableAutostart() : disableAutostart())
+                  .then(() => {
+                    patch((d) => {
+                      d.general.launchAtStartup = v;
+                    });
+                  })
+                  .catch((err: unknown) => {
+                    patch((d) => {
+                      d.general.launchAtStartup = false;
+                    });
+                    showToast(String(err), "error");
+                  });
+              }}
             />
           </Row>
           <Row title={t("settings.closeWindow")} hint={t("settings.closeWindowHint")}>

@@ -1,3 +1,4 @@
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 
@@ -12,7 +13,7 @@ mod translation;
 mod vocabulary_store;
 
 use app::config::{load_general_config, load_shortcuts, save_general_config};
-use app::keyboard_hook::{KeyboardHookProcess, spawn_keyboard_hook};
+use app::keyboard_hook::{HookPingTracker, KeyboardHookProcess, spawn_keyboard_hook};
 
 /// 读取设置里的历史保存时效（general.historyRetentionDays 天），缺失/非法一律回落默认 30 天。
 /// 与前端 DEFAULT_SETTINGS.general.historyRetentionDays 保持一致。
@@ -47,11 +48,16 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        // 开机自启动：macOS 用 LaunchAgent 注册登录项；--hidden 让自启时静默后台运行
+        .plugin(
+            tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, vec!["--hidden"].into()),
+        )
         .setup(|app| {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
 
             app.manage(KeyboardHookProcess(Arc::new(Mutex::new(None))));
+            app.manage(HookPingTracker(Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))));
 
             let initial_shortcuts = load_shortcuts(app.handle());
             app.manage(Mutex::new(initial_shortcuts));
@@ -154,6 +160,14 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // 以 --hidden 参数自启（开机自启动）时隐藏主窗口，仅留托盘。
+            //放在 setup 末尾，晚于 window-state 插件的 visible 恢复，保证真的藏住
+            if std::env::args().any(|arg| arg == "--hidden") {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
 
             Ok(())
         })

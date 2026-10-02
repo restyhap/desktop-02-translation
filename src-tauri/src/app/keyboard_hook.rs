@@ -1,5 +1,6 @@
-use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -10,7 +11,16 @@ use crate::app::config::{extract_keys_from_shortcut, ShortcutConfig};
 
 
 /// keyboard-hook 子进程控制柄（Arc 保证看门狗线程也能访问）
-pub struct KeyboardHookProcess(pub Arc<Mutex<Option<Child>>>);
+/// stdin 保留给看门狗 PING/PONG 心跳：判定「进程活着但事件 tap 失灵」这类假活
+pub struct KeyboardHookProcess(pub Arc<Mutex<Option<HookChild>>>);
+
+pub struct HookChild {
+    pub child: Child,
+    pub stdin: ChildStdin,
+}
+
+/// 心跳计数器：sent = 已发出的 PING 序号；seen = stdout 线程观察到的新 PONG 序号
+pub struct HookPingTracker(pub Arc<AtomicU64>, pub Arc<AtomicU64>);
 
 /// 读取当前快捷键配置并生成 keyboard-hook 启动参数
 fn hook_args(app: &tauri::AppHandle) -> Vec<String> {
@@ -101,6 +111,7 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
 
     let mut cmd = Command::new(&hook_bin);
     cmd.args(&args)
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
@@ -118,10 +129,11 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
     eprintln!("[main] keyboard-hook spawned, PID={}", child.id());
     let child_stderr = child.stderr.take();
     let child_stdout = child.stdout.take();
+    let child_stdin = child.stdin.take();
 
     {
         let hook_state = app.state::<KeyboardHookProcess>();
-        *hook_state.0.lock().unwrap() = Some(child);
+        *hook_state.0.lock().unwrap() = child_stdin.map(|stdin| HookChild { child, stdin });
     }
 
 
@@ -143,6 +155,13 @@ fn launch_hook(app: &tauri::AppHandle) -> bool {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
                 let trimmed = line.trim();
+                // PONG 心跳应答：把 seen 计数推到已发出 PING 的最新序号
+                if trimmed == "PONG" {
+                    let tracker = app.state::<HookPingTracker>();
+                    let sent = tracker.0.load(Ordering::Relaxed);
+                    tracker.1.store(sent, Ordering::Relaxed);
+                    continue;
+                }
                 // 严格过滤：只处理以 TRANSLATE 或 SHOW_MAIN 开头的事件行，跳过所有启动/调试日志
                 if !trimmed.starts_with("TRANSLATE") && !trimmed.starts_with("SHOW_MAIN") {
                     continue;
@@ -265,16 +284,23 @@ pub fn restart_keyboard_hook(app: &tauri::AppHandle) {
         let state = app.state::<KeyboardHookProcess>();
         let mut guard = state.0.lock().unwrap();
         if let Some(mut old) = guard.take() {
-            let _ = old.kill();
+            let _ = old.child.kill();
         }
     }
     launch_hook(app);
 }
 
 /// 看门狗：无论何种原因（spawn 失败/进程闪退/二进制半写状态被拉起后立刻死亡），
-/// keyboard-hook 不在运行就重新拉起，保证快捷键热键链路自愈
+/// keyboard-hook 不在运行就重新拉起，保证快捷键热键链路自愈。
+/// 另有 PING/PONG 心跳：开机自启动时事件 tap 可能创建过早而失灵——
+/// 子进程活着却收不到按键（假活，try_wait 看不出来）。连续两轮 PING 无 PONG
+/// 就重建子进程；重设快捷键能恢复、而现在自启动后不响应正是这个形态
 fn start_hook_watchdog(app: tauri::AppHandle) {
     let state = app.state::<KeyboardHookProcess>().0.clone();
+    let tracker = app.state::<HookPingTracker>();
+    let (sent, seen) = (tracker.0.clone(), tracker.1.clone());
+    // 连续失败次数（用于退避：反复重建仍失灵时把节奏放缓，避免疯狂建子进程）
+    let mut miss_streak = 0u32;
     thread::spawn(move || loop {
         thread::sleep(Duration::from_secs(3));
         // 每次检查都重读配置：用户在设置里新增/删除快捷键也能被接住
@@ -282,16 +308,70 @@ fn start_hook_watchdog(app: tauri::AppHandle) {
         if args.is_empty() {
             continue;
         }
-        let dead = {
+
+        fn kill_current(state: &Mutex<Option<HookChild>>) -> bool {
+            let mut guard = state.lock().unwrap();
+            if let Some(hc) = guard.as_mut() {
+                let _ = hc.child.kill();
+            }
+            let was_alive = guard.is_some();
+            *guard = None;
+            was_alive
+        }
+
+        // 1) 进程级判定：None 或已退出 → 直接重建
+        let exited = {
             let mut guard = state.lock().unwrap();
             match guard.as_mut() {
-                // 进程活着且未退出 → 无需处理
-                Some(child) => matches!(child.try_wait(), Ok(Some(_))),
-                None => true,
+                Some(hc) => matches!(hc.child.try_wait(), Ok(Some(_)) | Err(_)),
+                None => false, // None 属于「未设置快捷键或上次 launch 失败」，交给下方 launch 判断
             }
         };
-        if dead && !launch_hook(&app) {
-            eprintln!("[main] keyboard-hook 看门狗: 本次拉起失败，3 秒后重试");
+        if exited {
+            kill_current(&state);
+            if !launch_hook(&app) {
+                eprintln!("[main] keyboard-hook 看门狗: 重建失败，3 秒后重试");
+                miss_streak = miss_streak.saturating_add(1);
+            } else {
+                miss_streak = 0;
+            }
+            // 新进程给两个心跳周期的预热
+            sent.store(0, Ordering::Relaxed);
+            seen.store(0, Ordering::Relaxed);
+            continue;
+        }
+
+        // 2) 心跳判定：上一轮发出的 PING 至今没有 PONG → 进程假活，重建
+        let last_sent = sent.load(Ordering::Relaxed);
+        let last_seen = seen.load(Ordering::Relaxed);
+        if last_sent > 0 && last_seen < last_sent {
+            miss_streak = miss_streak.saturating_add(1);
+            eprintln!(
+                "[main] keyboard-hook 看门狗: 连续 {miss_streak} 轮无 PONG，判定事件 tap 失灵，重建子进程"
+            );
+            kill_current(&state);
+            if !launch_hook(&app) {
+                eprintln!("[main] keyboard-hook 看门狗: 重建失败，3 秒后重试");
+            }
+            sent.store(0, Ordering::Relaxed);
+            seen.store(0, Ordering::Relaxed);
+            // 反复重建仍失灵（如tique 权限类问题未解除）→ 每 5 次失败后额外歇 30 秒
+            if miss_streak.is_multiple_of(5) {
+                thread::sleep(Duration::from_secs(30));
+            }
+            continue;
+        }
+
+        // 3) 健康 → 发新一轮 PING
+        let pinged = {
+            let mut guard = state.lock().unwrap();
+            match guard.as_mut() {
+                Some(hc) => writeln!(hc.stdin, "PING").is_ok().then(|| hc.stdin.flush().is_ok()),
+                None => None,
+            }
+        };
+        if pinged.is_some() {
+            sent.store(last_sent + 1, Ordering::Relaxed);
         }
     });
 }

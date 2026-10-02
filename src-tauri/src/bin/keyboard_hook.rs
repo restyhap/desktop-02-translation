@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::env;
 use std::io::{self, Write};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const SEQ_WINDOW: Duration = Duration::from_millis(500);
@@ -124,6 +125,19 @@ fn main() {
     //         .map(|r| format!("{}:{:?}", r.tag, r.key_sequence))
     //         .collect::<Vec<_>>()
     // );
+
+    // 心跳应答：主进程看门狗每 3 秒写一行 PING，本进程立即回 PONG。
+    // 开机自启动时事件 tap 可能创建过早而失灵（进程活着但收不到按键事件），
+    // 看门狗凭 PONG 收不到就重建子进程，快捷键链路可自愈——无需用户重设快捷键
+    thread::spawn(move || {
+        for line in io::stdin().lines().map_while(Result::ok) {
+            if line.trim() == "PING" {
+                let mut out = io::stdout().lock();
+                let _ = writeln!(out, "PONG");
+                let _ = out.flush();
+            }
+        }
+    });
 
     if let Err(e) = rdev::listen(move |event| match event.event_type {
         rdev::EventType::KeyPress(key) => {
