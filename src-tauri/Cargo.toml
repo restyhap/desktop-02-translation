@@ -1,6 +1,6 @@
 [package]
 name = "desktop-translation"
-version = "0.1.0"
+version = "0.1.1"
 description = "Desktop Translation App"
 authors = ["you"]
 edition = "2021"
@@ -34,14 +34,18 @@ rdev = "0.5"
 sqlite = "0.37"
 flate2 = "1"
 walkdir = "2"
-moss-tts-nano = "0.1.1"
+# moss-tts-nano 仅在非 intel-mac 平台编译：ort-sys 无 x86_64-macos 预编译库；
+# MOSS-TTS 已下线且设置页分节已注释，Intel 版走系统语音即可
+# moss-tts-nano = "0.1.1"
 futures-util = "0.3"
+
+[target.'cfg(not(all(target_os = "macos", target_arch = "x86_64")))'.dependencies]
+moss-tts-nano = "0.1.1"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.5.0"
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
-moss-tts-nano = "0.1.1"
 md-5 = "0.10"
 hmac = "0.12"
 sha1 = "0.10"

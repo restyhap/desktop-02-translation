@@ -63,6 +63,8 @@ pub fn run() {
             app.manage(Mutex::new(initial_shortcuts));
 
             // MOSS-TTS 引擎缓存（进程级单实例，避免重复加载 7 个 ONNX session）
+            // 仅在编译了 moss-tts-nano 的平台上启用
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             app.manage(commands::tts::TtsEngineCache::default());
 
             spawn_keyboard_hook(app.handle().clone());
@@ -215,11 +217,17 @@ pub fn run() {
             commands::dictionary::dict_list_cmd,
             commands::dictionary::get_dict_paths_cmd,
             commands::dictionary::save_dict_paths_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_model_status_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_model_download_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_model_delete_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_synthesize_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_list_voices_cmd,
+            #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             commands::tts::tts_set_voice_cmd,
         ])
         .run(tauri::generate_context!())
