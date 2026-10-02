@@ -7,14 +7,16 @@
 
 Tauri 2 + React 19 桌面划词翻译应用（macOS；aarch64 + Intel x64 双架构发布，GitHub + Gitee 双平台）。
 
-## 子文档索引（agents/ 目录）
+## 子文档索引（.opencode/agents/ 目录；不自动加载，按需 read）
 
 | 文件 | 何时读 |
 |---|---|
-| `agents/文件同步.md` | 发布/版本号/Release/GitHub/Gitee/dmg 打包 |
-| `agents/自启动与快捷键.md` | 自启动、快捷键、keyboard-hook、全局按键监听 |
-| `agents/语音与构建差异.md` | Intel/x86_64 构建、moss-tts、ort-sys |
-| `agents/项目结构.md` | 首次全局探索、代码地图、设置/窗口/词典改动 |
+| `.opencode/agents/文件同步.md` | 发布/版本号/Release/GitHub/Gitee/dmg 打包 |
+| `.opencode/agents/自启动与快捷键.md` | 自启动、快捷键、keyboard-hook、全局按键监听 |
+| `.opencode/agents/语音与构建差异.md` | Intel/x86_64 构建、moss-tts、ort-sys |
+| `.opencode/agents/项目结构.md` | 首次全局探索、代码地图、设置/窗口/词典改动 |
+
+> 布局约定与全局一致：`~/.config/opencode/AGENTS.md`（全局常驻）/ `~/.config/opencode/agents/`（跨项目知识）；本层对应项目根 `AGENTS.md`（项目常驻）/ `.opencode/agents/`（项目知识）。`.opencode` 整目录被 .gitignore 屏蔽，勿将需提交的内容放于此。
 
 ## 高频事实（不读子文档也该知道的）
 
@@ -24,5 +26,5 @@ Tauri 2 + React 19 桌面划词翻译应用（macOS；aarch64 + Intel x64 双架
 - moss-tts-nano 被 cfg 门控排除出 Intel 构建（因 ort-sys 无 x86_64-macos 预编译库）
 - 用户数据全在 app 包外（`~/Library/Application Support` 等），替换 .app 无损
 - 新增 i18n key 必须九语齐备（zh/en/de/fr/es/it/pt/ru/ko）
-- `scripts/` 目录整体 gitignore（构建产物区）；可提交脚本放仓库根或 `agents/`
+- `scripts/`/`docs/`/`.opencode` 目录整体 gitignore（产物/私有知识区）；可提交脚本放仓库根
 - 开发日志：`/Users/resty/03-repository/_inbox/YYYY/MM/DD/`
