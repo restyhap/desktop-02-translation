@@ -24,10 +24,24 @@ VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | sed 's/[^0-9.]*\([0-9
 echo "==> 发布版本 v$VERSION"
 
 # ---------- 构建 ----------
-echo "==> 构建 aarch64"
-pnpm tauri build 2>&1 | tail -2
-echo "==> 构建 x86_64 (Intel)"
-pnpm tauri build --target x86_64-apple-darwin 2>&1 | tail -2
+# 注意：不要用 `| tail -2` 吞输出。构建失败时（如 bundle_dmg.sh 报错）Tauri 只给一行
+# 无信息量的 "failed to run bundle_dmg.sh"，真正的原因在被吞掉的 stderr 里。
+# 这里把完整日志落盘，失败时再打印末尾 40 行。
+LOGS="$(mktemp -d)"
+build_arch() {
+  local name="$1"; shift
+  echo "==> 构建 $name"
+  local log="$LOGS/$name.log"
+  if ! pnpm tauri build "$@" > "$log" 2>&1; then
+    echo "构建失败: $name（日志 $log）" >&2
+    tail -40 "$log" >&2
+    exit 1
+  fi
+  tail -2 "$log"
+}
+
+build_arch aarch64
+build_arch "x86_64 (Intel)" --target x86_64-apple-darwin
 
 DMG_AARCH64="src-tauri/target/release/bundle/dmg/Desktop Translation_${VERSION}_aarch64.dmg"
 DMG_X64="src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Desktop Translation_${VERSION}_x64.dmg"
