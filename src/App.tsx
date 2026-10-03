@@ -28,6 +28,7 @@ import { TranslationResultPanel } from "@/components/TranslationResultPanel";
 import { SaveToVocabDialog } from "@/components/SaveToVocabDialog";
 import { RecentStrip } from "@/components/RecentStrip";
 import { TranslateChipsRow } from "@/components/TranslateChipsRow";
+import { ShortcutPermBanner } from "@/components/ShortcutPermBanner";
 import { HistoryPanel } from "@/pages/HistoryPanel";
 import { VocabularyPanel } from "@/pages/VocabularyPanel";
 import { DictionaryPanel } from "@/pages/DictionaryPanel";
@@ -418,6 +419,10 @@ function App() {
                     </button>
                   }
                 />
+
+                {/* 授权故障横幅：未获「输入监控」时全局快捷键完全无反应，
+                    提示必须放在主页（用户真正卡住的地方），设置页只负责改配置 */}
+                <ShortcutPermBanner onGoToSettings={() => setSidebarTab("settings")} />
 
                 {/* 一体化翻译卡（与页头留一档间距，对齐历史页节奏） */}
                 <div className="mt-5">

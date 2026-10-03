@@ -45,7 +45,7 @@ The Intel (x86_64) build **does not include MOSS-TTS neural speech synthesis**; 
 
 Both are re-recordable in Settings. Global key listening uses a macOS event tap attached to the main thread's run loop — no sidecar process and no third-party hook library. Shortcut changes hot-swap the rule table without rebuilding the tap.
 
-> ⚠️ On first use, grant the app permission under **System Settings → Privacy & Security → Input Monitoring**, otherwise global hotkeys and selection capture will not respond. While the permission is missing, Settings shows a warning banner with a one-click shortcut to that pane. The permission is bound to the app's code hash, so it must be re-granted after installing a new build.
+> ⚠️ On first use, grant the app permission under **System Settings → Privacy & Security → Input Monitoring**, otherwise global hotkeys and selection capture will not respond. While the permission is missing, the **home page** shows a warning banner with two actions: “Open Input Monitoring Settings” and “Go to Settings”. The permission is bound to the app's code hash, so it must be re-granted after installing a new build. macOS will not show its own prompt when an entry already exists — **turn the switch off and back on** to refresh it.
 
 ## Build from Source
 

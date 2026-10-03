@@ -44,9 +44,12 @@ bash release.sh
 ## 高频事实（不读子文档也该知道的）
 
 - **全局快捷键 = 自建 ListenOnly tap，挂在主线程 run loop 上**（`src-tauri/src/app/keyboard_hook.rs`，手写 CoreGraphics/CoreFoundation FFI，**rdev 已移除**），没有 `keyboard-hook` 子进程，也没有 PING/PONG 心跳协议
-- tap 门禁是 macOS「**输入监控**」（`kTCCServiceListenEvent`），不是「辅助功能」；mask 刻意只申请 `KeyDown|KeyUp|FlagsChanged` —— 未授权时 mask 被清空 → `CGEventTapCreate` 返回 NULL，我们据此识别并重试（别改回 `ForAllEvents`，那会退回静默失败）
+- tap 门禁是 macOS「**输入监控**」（`kTCCServiceListenEvent`），不是「辅助功能」；mask 刻意只申请 `KeyDown|KeyUp|FlagsChanged`（少申请一位就少一类门禁）
+- **授权判据只用 `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted`**（`IOKit` framework FFI，在公开 SDK 里有声明）。三个信号里只有它可靠：`CGEventTapCreate` 未授权时照样返回非 NULL（实测证伪）；`CGPreflightListenEventAccess` 只看「有没有允许记录」、**不校验 csreq 是否匹配当前二进制**，对不上时仍返回 true —— 这正是「明明授权了却没反应」的成因。`kIOHIDAccessTypeUnknown`(2) 按未授权处理（csreq 对不上正是这个值）
 - **tap 回调只能在主线程，且绝不能碰 TIS/AppKit API** —— rdev 0.5.3 在回调里调 `TISGetInputSourceProperty` 会触发 `dispatch_assert_queue` → `ud2` → SIGILL 崩溃（v0.1.2 的死法，详见 `.opencode/agents/自启动与快捷键.md`）
-- 本项目 ad-hoc 签名、无 Developer ID → TCC 授权绑定 cdhash → **每次重新打包都会作废已有授权**，用户须重新授权（治本需 Developer ID 签名公证）
+- **授权失效的头号根因是 app bundle 没签名**，不是代码：`tauri.conf.json` 的 `bundle.macOS.signingIdentity` 必须是 `"-"`（ad-hoc）。缺了它 Tauri 只留链接器的 linker-signed 签名（Identifier 是 target-triple 哈希、`Info.plist=not bound`、无 `_CodeSignature` 目录），TCC 无法建立稳定身份 → 授权永远不生效
+- 本项目 ad-hoc 签名、无 Developer ID → TCC 授权 csreq 只落 cdhash → **每次重新打包都会作废已有授权**。ad-hoc 下 macOS 不会主动弹授权窗，用户须去系统设置把开关**关掉再打开**才能刷新（单纯「已经是开的」不刷新）
+- 授权故障横幅在**主页**（`src/components/ShortcutPermBanner.tsx`），不在设置页；判定式 `!listening || (listen_event !== true && key_events === 0)` —— `key_events === 0` 是反向保险，本次会话收到过事件就证明授权有效，绝不误报
 - moss-tts-nano 被 cfg 门控排除出 Intel 构建（因 ort-sys 无 x86_64-macos 预编译库）
 - 用户数据全在 app 包外（`~/Library/Application Support` 等），替换 .app 无损
 - `scripts/`/`docs/`/`.opencode` 目录整体 gitignore（产物/私有知识区）；可提交脚本放仓库根

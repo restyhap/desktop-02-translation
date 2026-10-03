@@ -45,7 +45,7 @@ Der Intel-Build (x86_64) **enthält keine MOSS-TTS neuronale Sprachsynthese**; d
 
 Beide lassen sich in den Einstellungen neu aufzeichnen. Die globale Tastaturüberwachung nutzt einen macOS-Event-Tap im Run-Loop des Hauptthreads — kein Hilfsprozess und keine Drittanbieter-Bibliothek. Änderungen an Kurzbefehlen werden per Hot-Swap übernommen, ohne den Tap neu aufzubauen.
 
-> ⚠️ Gewähren Sie der App bei der ersten Verwendung unter **Systemeinstellungen → Datenschutz & Sicherheit → Eingabeüberwachung** die entsprechende Berechtigung, sonst reagieren globale Hotkeys und die Erfassung von Auswahlen nicht. Solange die Berechtigung fehlt, zeigt die App einen Warnhinweis mit Ein-Klick-Sprung zu diesem Bereich. Die Berechtigung ist an den Code-Hash der App gebunden und muss nach einer neuen Version erneut erteilt werden.
+> ⚠️ Gewähren Sie der App bei der ersten Verwendung unter **Systemeinstellungen → Datenschutz & Sicherheit → Eingabeüberwachung** die entsprechende Berechtigung, sonst reagieren globale Hotkeys und die Erfassung von Auswahlen nicht. Solange die Berechtigung fehlt, zeigt die **Startseite** einen Warnhinweis mit zwei Aktionen: „Eingabeüberwachung öffnen“ und „Zu den Einstellungen“. Die Berechtigung ist an den Code-Hash der App gebunden und muss nach einer neuen Version erneut erteilt werden. Ist bereits ein Eintrag vorhanden, zeigt macOS keine eigene Nachfrage — **Schalter aus und wieder einschalten**, um ihn zu erneuern.
 
 ## Aus dem Quellcode bauen
 

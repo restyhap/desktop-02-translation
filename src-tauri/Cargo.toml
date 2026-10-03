@@ -1,6 +1,6 @@
 [package]
 name = "desktop-translation"
-version = "0.1.4"
+version = "0.1.5"
 description = "Desktop Translation App"
 authors = ["you"]
 edition = "2021"

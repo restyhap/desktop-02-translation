@@ -10,7 +10,7 @@
  *   getShortcuts/updateShortcuts。
  * 界面语言：UI_LOCALES 九语切换（LocaleProvider）。
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DragDropProvider, DragOverlay } from "@dnd-kit/react";
 import { useSortable } from "@dnd-kit/react/sortable";
 import { arrayMove } from "@dnd-kit/helpers";
@@ -64,7 +64,7 @@ function Row({ title, hint, children }: { title: string; hint?: string; children
 
 import { SUPPORTED_LANGUAGES } from "@/types/translation";
 import type { AppSettings } from "@/types/settings";
-import type { HookStatus, ShortcutConfig } from "@/types/shortcuts";
+import type { ShortcutConfig } from "@/types/shortcuts";
 import type { ApiKeyOption } from "@/storage";
 import {
   addApiKey,
@@ -75,8 +75,6 @@ import {
   saveDictPaths,
   updateShortcuts,
   getShortcuts,
-  getHookStatus,
-  openInputMonitoring,
   listApiKeys,
   purgeOldHistory,
   reorderApiKeys,
@@ -1309,16 +1307,15 @@ function AddKeyModal({
 
 /**
  * 快捷键分节。
- * 除了 getShortcuts/updateShortcuts，还读取后端监听诊断状态：
- * 未获得 macOS「输入监控」授权时系统根本不投递按键事件，快捷键必然无反应，
- * 必须在界面上可见地提示（此前是纯静默失败，用户无从排查）。
- * 窗口重新获得焦点时轮询状态，便于用户授权后立即看到提示消失。
+ *
+ * 这里只负责「改配置」。未获得 macOS「输入监控」授权时全局快捷键必然无反应，
+ * 那属于**故障**而非配置，已由主页的 `ShortcutPermBanner` 承担提示与跳转
+ * （用户往往是在主页划词却毫无动静时才察觉问题，把提示埋在设置页等于静默失败）。
  */
 function ShortcutRows() {
   const { t } = useAppLocale();
   const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
   const [loaded, setLoaded] = useState(false);
-  const [hookStatus, setHookStatus] = useState<HookStatus | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1338,71 +1335,16 @@ function ShortcutRows() {
     };
   }, []);
 
-  const refreshStatus = useCallback(() => {
-    getHookStatus()
-      .then((status) => setHookStatus(status))
-      .catch((err: unknown) => {
-        console.error("[Settings] 读取快捷键监听状态失败:", err);
-      });
-  }, []);
-
-  useEffect(() => {
-    refreshStatus();
-    const timer = window.setInterval(refreshStatus, 2000);
-    return () => window.clearInterval(timer);
-  }, [refreshStatus]);
-
   const updateShortcut = (k: keyof ShortcutConfig, v: string) => {
     const updated = { ...shortcuts, [k]: v };
     setShortcuts(updated);
-    updateShortcuts(updated)
-      .then(() => refreshStatus())
-      .catch((err: unknown) => {
-        console.error("[Settings] 保存快捷键失败:", err);
-      });
+    updateShortcuts(updated).catch((err: unknown) => {
+      console.error("[Settings] 保存快捷键失败:", err);
+    });
   };
-
-  // 后端未就绪 / tap 线程未运行 / 未获输入监控授权 —— 三种情况都让快捷键无法触发
-  const permMissing = hookStatus !== null && (!hookStatus.listening || !hookStatus.listen_event);
 
   return (
     <div>
-      {permMissing && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: "10px 12px",
-            borderRadius: 10,
-            background: "var(--warn-bg, rgba(217, 119, 6, 0.12))",
-            border: "1px solid var(--warn-border, rgba(217, 119, 6, 0.35))",
-            color: "var(--text-primary)",
-            fontSize: 12,
-            lineHeight: 1.6,
-          }}
-        >
-          <div>{t("settings.shortcutPermWarn")}</div>
-          <button
-            type="button"
-            onClick={() => {
-              openInputMonitoring().catch((err: unknown) => {
-                console.error("[Settings] 打开输入监控设置失败:", err);
-              });
-            }}
-            style={{
-              marginTop: 8,
-              padding: "4px 10px",
-              borderRadius: 6,
-              border: "1px solid var(--border)",
-              background: "var(--bg-elevated, transparent)",
-              color: "var(--text-primary)",
-              cursor: "pointer",
-              fontSize: 12,
-            }}
-          >
-            {t("settings.shortcutPermBtn")}
-          </button>
-        </div>
-      )}
       <Row title={t("settings.shortcutTranslate")} hint={t("settings.shortcutTranslateHint")}>
         <ShortcutRecorder
           value={shortcuts.translate}

@@ -45,7 +45,7 @@ A versão Intel (x86_64) **não inclui a síntese de voz neural MOSS-TTS**; a pr
 
 Os dois podem ser regravados nas Configurações. A escuta global de teclas usa um event tap do macOS ligado ao run loop da thread principal — sem processo auxiliar e sem biblioteca de terceiros. Alterações de atalhos substituem a tabela de regras a quente, sem reconstruir o tap.
 
-> ⚠️ No primeiro uso, conceda permissão ao aplicativo em **Ajustes do Sistema → Privacidade e Segurança → Monitorização de entrada**, caso contrário os atalhos globais e a captura da seleção não funcionarão. Enquanto a permissão faltar, o aplicativo exibe um aviso com acesso em um clique a esse painel. A permissão está vinculada ao hash de código do aplicativo, portanto precisa ser concedida novamente após instalar uma nova versão.
+> ⚠️ No primeiro uso, conceda permissão ao aplicativo em **Ajustes do Sistema → Privacidade e Segurança → Monitorização de entrada**, caso contrário os atalhos globais e a captura da seleção não funcionarão. Enquanto a permissão faltar, a **página inicial** exibe um aviso com duas ações: “Abrir Monitorização de entrada” e “Ir para Configurações”. A permissão está vinculada ao hash de código do aplicativo, portanto precisa ser concedida novamente após instalar uma nova versão. Se a entrada já existir, o macOS não mostra nenhuma solicitação — **desligue e religue o interruptor** para renová-la.
 
 ## Compilar a partir do código-fonte
 

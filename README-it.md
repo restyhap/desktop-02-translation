@@ -45,7 +45,7 @@ La build Intel (x86_64) **non include la sintesi vocale neurale MOSS-TTS**; la p
 
 Entrambe sono riconfigurabili nelle Impostazioni. L'ascolto globale delle chiavi usa un event tap di macOS agganciato al run loop del thread principale: nessun processo separato né libreria di terze parti. Le modifiche alle scorciatoie sostituiscono a caldo la tabella delle regole, senza ricostruire il tap.
 
-> ⚠️ Al primo utilizzo, concedi all'app il permesso in **Impostazioni di Sistema → Privacy e Sicurezza → Monitoraggio input**, altrimenti le scorciatoie globali e la cattura della selezione non funzioneranno. Finché il permesso manca, l'app mostra un avviso con accesso in un clic a quel pannello. Il permesso è legato all'hash del codice dell'app, quindi va riconcesso dopo una nuova versione.
+> ⚠️ Al primo utilizzo, concedi all'app il permesso in **Impostazioni di Sistema → Privacy e Sicurezza → Monitoraggio input**, altrimenti le scorciatoie globali e la cattura della selezione non funzioneranno. Finché il permesso manca, la **pagina principale** mostra un avviso con due azioni: «Apri Monitoraggio input» e «Vai alle Impostazioni». Il permesso è legato all'hash del codice dell'app, quindi va riconcesso dopo una nuova versione. Se la voce esiste già, macOS non mostra alcuna richiesta: **spegni e riaccendi l'interruttore** per rinnovarla.
 
 ## Compilare dal codice sorgente
 

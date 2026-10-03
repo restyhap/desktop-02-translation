@@ -21,13 +21,11 @@
 //!
 //! 三条必须记住的约束：
 //! 1. **回调只能在主线程**：任何跨线程假设的系统调用都会 `dispatch_assert_queue` → 崩。
-//! 2. **mask 必须收窄**：只申请 `KeyDown|KeyUp|FlagsChanged`。macOS 会把未获授权的
-//!    事件类型对应 mask 位清掉，全清时 `CGEventTapCreate` 返回 NULL —— 这是唯一可靠
-//!    的「授权缺失」信号。旧的 `kCGEventMaskForAllEvents` 因鼠标类事件不受「输入监控」
-//!    管 → mask 永不为空 → 返回非 NULL 却收不到键盘事件，即 v0.1.1「完全没反应」的
-//!    静默失败根因。
+//! 2. **mask 必须收窄**：只申请 `KeyDown|KeyUp|FlagsChanged`（少申请一位就少一类门禁）。
+//!    但注意：`CGEventTapCreate` 返回 NULL **不是**授权信号 —— 实测未授权时它照样返回
+//!    非 NULL。授权判据只用 `IOHIDCheckAccess`，详见 `mod listen_event_access`。
 //! 3. **静默失败必须有 UI 侧可见提示**：用户看不到后台日志，`HookStatus` 三个诊断量
-//!    由设置页轮询展示（`listening` / `listen_event` / `key_events`）。
+//!    由**主页**的 `ShortcutPermBanner` 轮询展示（`listening` / `listen_event` / `key_events`）。
 //!
 //! 平台：事件 tap 是 macOS 专有 API，本模块只在 macOS 编译（见文件末尾 extern 块的
 //! `cfg` 门控）；其余逻辑是纯 Rust。
@@ -109,10 +107,13 @@ const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 /// 只申请这三类事件。mask 位 = `1 << type`。
 ///
 /// 刻意**不用** `kCGEventMaskForAllEvents`：未获「输入监控」授权时，系统只清掉不被
-/// 允许的位，而鼠标类事件不受该权限管辖 → mask 永不为空 → `CGEventTapCreate` 返回
-/// 非 NULL，进程也活着，但键盘事件一个都收不到 —— 这正是 v0.1.1「快捷键完全没反应
-/// 却毫无线索」的根因。收窄之后，未授权会让 mask 清空 → 返回 NULL → 我们能明确
-/// 识别并重试。
+/// 允许的位，而鼠标类事件不受该权限管辖 → mask 永不为空 → 进程活着、tap 也建起来了，
+/// 但键盘事件一个都收不到 —— 这正是 v0.1.1「快捷键完全没反应却毫无线索」的根因。
+///
+/// 注意：**不要指望靠 mask 清空来识别授权缺失**。隔离探针实测，未授权
+/// （`IOHIDCheckAccess` 返回 `kIOHIDAccessTypeDenied`）时 `CGEventTapCreate` 仍返回
+/// 非 NULL 且事件有投递。授权状态一律查 `listen_event_access::granted()`
+/// （= `IOHIDCheckAccess`），那才是可靠信号。
 const EVENT_MASK: u64 =
     (1u64 << EVENT_KEY_DOWN) | (1u64 << EVENT_KEY_UP) | (1u64 << EVENT_FLAGS_CHANGED);
 
@@ -565,11 +566,23 @@ fn install_tap(status: &Arc<HookStatusInner>) {
         return;
     };
 
+    // 授权判定用 IOHIDCheckAccess —— 它是唯一会比对 csreq 的信号。
+    // 另两个都不可靠（详见 `mod listen_event_access` 的文档注释）：
+    // `CGEventTapCreate` 未授权时照样返回非 NULL；`CGPreflightListenEventAccess()`
+    // 在 csreq 不匹配时也照样返回 true。
     let granted = listen_event_access::granted();
     status.listen_event.store(granted, Ordering::Relaxed);
-    if !granted {
-        // 触发系统自带授权弹窗（文案由 macOS 本地化，无需前端多语言适配）
-        listen_event_access::request();
+    if granted {
+        log_tap_recovered();
+    } else {
+        // 只在 TCC 里完全没有本 app 的记录时才弹窗；已有旧记录时 macOS 不会弹窗
+        // （只是静默比对 csreq 失败），弹了也是白弹。
+        if listen_event_access::need_request_dialog() {
+            // 触发系统自带授权弹窗（文案由 macOS 本地化，无需前端多语言适配）
+            listen_event_access::request();
+        }
+        log_tap_problem("[hook] 未获得 macOS「输入监控」授权：系统不会投递按键事件。\
+             系统设置 → 隐私与安全性 → 输入监控（若已有条目，需关掉再打开才会刷新授权）");
     }
 
     // safe：tap 为 null 或授权未生效时系统不会调用回调
@@ -585,10 +598,8 @@ fn install_tap(status: &Arc<HookStatusInner>) {
     };
     if tap.is_null() {
         status.listening.store(false, Ordering::Relaxed);
-        log_tap_problem(
-            "[hook] CGEventTapCreate 返回 NULL：未获得 macOS「输入监控」授权，\
-             系统不会投递按键事件（系统设置 → 隐私与安全性 → 输入监控）",
-        );
+        // 授权状态上面已单独判定并提示过了；这里只报告 tap 本身建不起来
+        log_tap_problem("[hook] CGEventTapCreate 返回 NULL：事件 tap 创建失败（与授权无关）");
         return;
     }
 
@@ -922,8 +933,28 @@ fn parse_spec(spec: &str) -> (u8, Vec<KeyMappingId>) {
 
 /// ListenOnly tap 的门禁是 `kTCCServiceListenEvent`（系统设置里的「输入监控」），
 /// 不是「辅助功能」。未授权时系统会静默丢弃键盘事件；因为本模块的 mask 只申请了
-/// 键盘三类事件，未授权会让 mask 清空 → `CGEventTapCreate` 返回 NULL → 我们能
-/// 明确识别（而不是静默无反应）。
+/// 键盘三类事件。
+///
+/// # 判授权：三个信号，可靠性递增
+///
+/// - `CGEventTapCreate` 的返回值：**不是**授权信号。实测未授权时它照样返回
+///   非 NULL，只是系统不再投递事件。
+/// - `CGPreflightListenEventAccess()`：**也不是**可靠信号。TCC 只看「有没有
+///   这条 app 的允许记录」，不校验该记录的 csreq 是否匹配当前二进制。实测
+///   csreq 不匹配（旧版本残留的允许记录 + 重新打包后 cdhash 变了）时它照样
+///   返回 true，而事件一个都收不到 —— 这正是用户「明明授权了却没反应」的成因。
+/// - `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)`：**可靠**。这是 IOKit 实际
+///   用的那套鉴权查询，会比对 csreq。实测在本应用进程内（lldb attach 调用），
+///   授权记录绑着旧 cdhash 时它返回 `kIOHIDAccessTypeUnknown`（2）—— 正好是
+///   「csreq 对不上、无法确定」的特征，与事件一个都收不到的现象吻合。
+///
+/// 即便如此仍保留 `HookStatusInner::key_events` 作兜底：本次会话一旦真收到过
+/// 事件，就是授权有效的铁证，前端据此绝不误报故障。
+///
+/// 拿到授权的唯一办法是让用户在系统设置里把开关**关掉再打开**，迫使 tccd
+/// 按当前二进制的签名重写授权记录。
+///
+/// mask 保持 `KeyDown|KeyUp|FlagsChanged` 只是为了少申请权限面，与授权判据无关。
 #[cfg(target_os = "macos")]
 mod listen_event_access {
     #[link(name = "CoreGraphics", kind = "framework")]
@@ -932,9 +963,41 @@ mod listen_event_access {
         fn CGRequestListenEventAccess();
     }
 
+    // `IOHIDCheckAccess` 与相关枚举。
+    //
+    // 声明来源：公开 SDK 头 `IOKit.framework/Headers/hidsystem/IOHIDLib.h`
+    //（`IOHIDCheckAccess` 标注 `__OSX_AVAILABLE(10.15)`，**不是**私有 API）。
+    // 框架需要显式 link —— app 二进制本身没有对它的未定义引用（`nm -u` 查不到），
+    // 它是被 CoreGraphics 传递依赖进来的。
+    #[link(name = "IOKit", kind = "framework")]
+    extern "C" {
+        // 查询进程在某类访问上的授权状态。
+        //
+        // - `request_type`：`kIOHIDRequestTypePostEvent=0`、`kIOHIDRequestTypeListenEvent=1`
+        // - 返回：`kIOHIDAccessTypeGranted=0`、`Denied=1`、`Unknown=2`
+        fn IOHIDCheckAccess(request_type: i32) -> i32;
+    }
+
+    /// IOKit 的访问请求类型（见 `IOHIDLib.h` 的 `IOHIDRequestType`）
+    const REQUEST_TYPE_LISTEN_EVENT: i32 = 1;
+
+    /// IOKit 的授权状态（见 `IOHIDLib.h` 的 `IOHIDAccessType`）
+    const ACCESS_TYPE_GRANTED: i32 = 0;
+
+    /// 授权是否**确定**有效。这是唯一会比对 csreq 的信号。
     pub fn granted() -> bool {
+        // safe：纯查询当前进程的授权状态，无副作用、不修改任何状态
+        let raw = unsafe { IOHIDCheckAccess(REQUEST_TYPE_LISTEN_EVENT) };
+        // `Unknown`（2）说明 csreq 与当前二进制不匹配、TCC 无法判定 —— 按未授权处理，
+        // 否则用户会看到「有授权却没反应」且没有任何提示
+        raw == ACCESS_TYPE_GRANTED
+    }
+
+    /// TCC 里**已无**本 app 的记录时才需要弹窗（`CGPreflightListenEventAccess`
+    /// 答 false 才成立），否则 macOS 不会弹窗、只会静默比对 csreq 失败。
+    pub fn need_request_dialog() -> bool {
         // safe：查询当前进程的授权状态，无副作用
-        unsafe { CGPreflightListenEventAccess() }
+        !unsafe { CGPreflightListenEventAccess() }
     }
 
     pub fn request() {

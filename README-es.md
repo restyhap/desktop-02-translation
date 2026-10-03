@@ -45,7 +45,7 @@ La versión Intel (x86_64) **no incluye la síntesis de voz neuronal MOSS-TTS**;
 
 Ambos pueden reconfigurarse en los ajustes. La escucha global de teclas usa un event tap de macOS conectado al run loop del hilo principal: sin proceso auxiliar ni biblioteca de terceros. Los cambios de atajos sustituyen la tabla de reglas en caliente, sin reconstruir el tap.
 
-> ⚠️ En el primer uso, concede a la aplicación permiso en **Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada**; de lo contrario, los atajos globales y la captura de la selección no responderán. Mientras falte el permiso, la aplicación muestra un aviso con acceso de un clic a ese panel. El permiso está vinculado al hash de código de la aplicación, por lo que debe concederse de nuevo tras instalar una versión nueva.
+> ⚠️ En el primer uso, concede a la aplicación permiso en **Ajustes del Sistema → Privacidad y seguridad → Monitorización de entrada**; de lo contrario, los atajos globales y la captura de la selección no responderán. Mientras falte el permiso, la **página de inicio** muestra un aviso con dos acciones: «Abrir Monitorización de entrada» y «Ir a Ajustes». El permiso está vinculado al hash de código de la aplicación, por lo que debe concederse de nuevo tras instalar una versión nueva. Si ya existe una entrada, macOS no muestra ninguna solicitud: **apaga y vuelve a encender el interruptor** para renovarla.
 
 ## Compilar desde el código fuente
 

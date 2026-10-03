@@ -45,7 +45,7 @@ La version Intel (x86_64) **n'inclut pas la synthèse vocale neuronale MOSS-TTS*
 
 Les deux peuvent être redéfinis dans les réglages. L'écoute globale des touches utilise un event tap macOS attaché à la run loop du thread principal — aucun processus séparé, aucune bibliothèque tierce. La modification des raccourcis remplace la table de règles à chaud, sans reconstruire le tap.
 
-> ⚠️ À la première utilisation, accordez à l'application l'autorisation dans **Réglages Système → Confidentialité et sécurité → Surveillance des entrées**, sinon les raccourcis globaux et la capture de la sélection ne fonctionneront pas. Tant que l'autorisation manque, l'application affiche un avertissement avec un accès en un clic à ce panneau. L'autorisation est liée à l'empreinte de code de l'application : elle doit être accordée à nouveau après une nouvelle version.
+> ⚠️ À la première utilisation, accordez à l'application l'autorisation dans **Réglages Système → Confidentialité et sécurité → Surveillance des entrées**, sinon les raccourcis globaux et la capture de la sélection ne fonctionneront pas. Tant que l'autorisation manque, la **page d'accueil** affiche un bandeau d'avertissement avec deux actions : « Ouvrir Surveillance des entrées » et « Aller aux réglages ». L'autorisation est liée à l'empreinte de code de l'application : elle doit être accordée à nouveau après une nouvelle version. Si une entrée existe déjà, macOS n'affiche aucune demande — **désactivez puis réactivez l'interrupteur** pour la renouveler.
 
 ## Compilation depuis les sources
 
