@@ -43,9 +43,9 @@ Intel(x86_64) 빌드에는 **MOSS-TTS 신경 음성 합성이 포함되지 않�
 | `⌘ + C + C` | 현재 선택 영역 번역(팝업) |
 | `⌘ + C + V` | 주 창 표시 |
 
-두 단축키 모두 설정에서 다시 녹화할 수 있습니다. 전역 키 리스닝은 별도의 `keyboard-hook` 프로세스(rdev)에서 동작하며, 주 프로세스가 PING/PONG heartbeat 워치독으로 감시해 응답이 없을 때 다시 띄웁니다.
+두 단축키 모두 설정에서 다시 녹화할 수 있습니다. 전역 키 리스닝(rdev)은 별도 프로세스 없이 주 프로세스 내부의 백그라운드 스레드에서 동작합니다. 단축키를 바꾸면 리스너를 재시작하지 않고 규칙 테이블을 핫스왑합니다.
 
-> ⚠️ 처음 사용할 때 **System Settings → Privacy & Security → Accessibility**에서 앱 권한을 허용하지 않으면 전역 단축키와 선택 영역 캡처가 동작하지 않습니다. 권한은 앱 코드 서명에 묶여 있어서 새 버전을 다시 설치하면 권한을 다시 허용해야 할 수 있습니다.
+> ⚠️ 처음 사용할 때 **System Settings → Privacy & Security → Input Monitoring**에서 앱 권한을 허용하지 않으면 전역 단축키와 선택 영역 캡처가 동작하지 않습니다. 권한이 없으면 설정 화면에 경고 배너가 뜨고 해당 패널로 한 번에 이동할 수 있습니다. 권한은 앱 코드 해시에 묶여 있어서 새 버전을 설치하면 권한을 다시 허용해야 합니다.
 
 ## 소스에서 빌드
 
@@ -62,7 +62,7 @@ git clone https://github.com/restyhap/desktop-02-translation.git
 cd desktop-02-translation
 
 pnpm install
-pnpm tauri dev          # dev mode (builds the keyboard-hook / dictbuild sidecars too)
+pnpm tauri dev          # dev mode (also builds the dictbuild sidecar)
 ```
 
 ### 품질 게이트
@@ -111,8 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  hook watchdog and event dispatch
-  bin/keyboard_hook.rs  rdev global key listener sidecar (PING/PONG heartbeat)
+  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer

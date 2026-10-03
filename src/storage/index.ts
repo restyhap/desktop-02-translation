@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { HookStatus } from "@/types/shortcuts";
 import type { TranslationRecord } from "@/types/translation";
 import type { VocabularyGroup, VocabularyWord } from "@/types/vocabulary";
 
@@ -203,6 +204,16 @@ export async function getShortcuts<T>(): Promise<T> {
 
 export async function updateShortcuts<T extends object>(config: T): Promise<void> {
   await invoke("update_shortcuts_cmd", { config });
+}
+
+/** 读取全局快捷键监听诊断状态（授权缺失时 listen_event=false） */
+export async function getHookStatus(): Promise<HookStatus> {
+  return invoke<HookStatus>("get_hook_status_cmd");
+}
+
+/** 打开系统「输入监控」设置面板 */
+export async function openInputMonitoring(): Promise<boolean> {
+  return invoke<boolean>("open_input_monitoring_cmd");
 }
 
 // ==================== Storage Abstraction Layer ====================

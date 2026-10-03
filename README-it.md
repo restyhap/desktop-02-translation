@@ -43,9 +43,9 @@ La build Intel (x86_64) **non include la sintesi vocale neurale MOSS-TTS**; la p
 | `⌘ + C + C` | Traduci la selezione corrente (popup) |
 | `⌘ + C + V` | Mostra la finestra principale |
 
-Entrambe sono riconfigurabili nelle Impostazioni. L'ascolto globale delle chiavi viene eseguito in un processo separato `keyboard-hook` (rdev); il processo principale lo sorveglia con un watchdog heartbeat PING/PONG e lo riavvia se diventa non responsivo.
+Entrambe sono riconfigurabili nelle Impostazioni. L'ascolto globale delle chiavi (rdev) viene eseguito su thread in background del processo principale — nessun processo separato. Le modifiche alle scorciatoie sostituiscono a caldo la tabella delle regole, senza riavviare l'ascolto.
 
-> ⚠️ Al primo utilizzo, concedi all'app il permesso in **Impostazioni di Sistema → Privacy e Sicurezza → Accessibilità**, altrimenti le scorciatoie globali e la cattura della selezione non funzioneranno. Il permesso è legato alla firma di codice dell'app, quindi potrebbe dover essere riconsentito dopo aver reinstallato una nuova versione.
+> ⚠️ Al primo utilizzo, concedi all'app il permesso in **Impostazioni di Sistema → Privacy e Sicurezza → Monitoraggio input**, altrimenti le scorciatoie globali e la cattura della selezione non funzioneranno. Finché il permesso manca, l'app mostra un avviso con accesso in un clic a quel pannello. Il permesso è legato all'hash del codice dell'app, quindi va riconcesso dopo una nuova versione.
 
 ## Compilare dal codice sorgente
 
@@ -62,7 +62,7 @@ git clone https://github.com/restyhap/desktop-02-translation.git
 cd desktop-02-translation
 
 pnpm install
-pnpm tauri dev          # dev mode (builds the keyboard-hook / dictbuild sidecars too)
+pnpm tauri dev          # dev mode (also builds the dictbuild sidecar)
 ```
 
 ### Controlli di qualità
@@ -111,8 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  hook watchdog and event dispatch
-  bin/keyboard_hook.rs  rdev global key listener sidecar (PING/PONG heartbeat)
+  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer

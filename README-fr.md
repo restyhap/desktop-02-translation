@@ -43,9 +43,9 @@ La version Intel (x86_64) **n'inclut pas la synthèse vocale neuronale MOSS-TTS*
 | `⌘ + C + C` | Traduire la sélection courante (fenêtre) |
 | `⌘ + C + V` | Afficher la fenêtre principale |
 
-Les deux peuvent être redéfinis dans les réglages. L'écoute globale des touches s'exécute dans un processus `keyboard-hook` séparé (rdev) ; le processus principal la surveille avec un chien de garde PING/PONG et la relance si elle devient injoignable.
+Les deux peuvent être redéfinis dans les réglages. L'écoute globale des touches (rdev) s'exécute sur des threads de fond du processus principal — plus aucun processus séparé. La modification des raccourcis remplace la table de règles à chaud, sans redémarrage de l'écouteur.
 
-> ⚠️ À la première utilisation, accordez à l'application l'autorisation dans **Réglages Système → Confidentialité et sécurité → Accessibilité**, sinon les raccourcis globaux et la capture de la sélection ne fonctionneront pas. L'autorisation est liée à la signature de code de l'application : il peut donc être nécessaire de l'accorder à nouveau après l'installation d'une nouvelle version.
+> ⚠️ À la première utilisation, accordez à l'application l'autorisation dans **Réglages Système → Confidentialité et sécurité → Surveillance des entrées**, sinon les raccourcis globaux et la capture de la sélection ne fonctionneront pas. Tant que l'autorisation manque, l'application affiche un avertissement avec un accès en un clic à ce panneau. L'autorisation est liée à l'empreinte de code de l'application : elle doit être accordée à nouveau après une nouvelle version.
 
 ## Compilation depuis les sources
 
@@ -62,7 +62,7 @@ git clone https://github.com/restyhap/desktop-02-translation.git
 cd desktop-02-translation
 
 pnpm install
-pnpm tauri dev          # dev mode (builds the keyboard-hook / dictbuild sidecars too)
+pnpm tauri dev          # dev mode (also builds the dictbuild sidecar)
 ```
 
 ### Contrôles qualité
@@ -111,8 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  hook watchdog and event dispatch
-  bin/keyboard_hook.rs  rdev global key listener sidecar (PING/PONG heartbeat)
+  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer

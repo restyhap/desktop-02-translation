@@ -43,9 +43,9 @@ The Intel (x86_64) build **does not include MOSS-TTS neural speech synthesis**; 
 | `⌘ + C + C` | Translate the current selection (popup) |
 | `⌘ + C + V` | Show the main window |
 
-Both are re-recordable in Settings. Global key listening runs in a separate `keyboard-hook` process (rdev); the main process guards it with a PING/PONG heartbeat watchdog and respawns it if it goes unresponsive.
+Both are re-recordable in Settings. Global key listening (rdev) runs on background threads inside the main process — no sidecar process. Shortcut changes hot-swap the rule table without restarting the listener.
 
-> ⚠️ On first use, grant the app permission under **System Settings → Privacy & Security → Accessibility**, otherwise global hotkeys and selection capture will not respond. The permission is tied to the app's code signature, so it may need re-granting after reinstalling a new version.
+> ⚠️ On first use, grant the app permission under **System Settings → Privacy & Security → Input Monitoring**, otherwise global hotkeys and selection capture will not respond. While the permission is missing, Settings shows a warning banner with a one-click shortcut to that pane. The permission is bound to the app's code hash, so it must be re-granted after installing a new build.
 
 ## Build from Source
 
@@ -62,7 +62,7 @@ git clone https://github.com/restyhap/desktop-02-translation.git
 cd desktop-02-translation
 
 pnpm install
-pnpm tauri dev          # dev mode (builds the keyboard-hook / dictbuild sidecars too)
+pnpm tauri dev          # dev mode (also builds the dictbuild sidecar)
 ```
 
 ### Quality gates
@@ -111,8 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  hook watchdog and event dispatch
-  bin/keyboard_hook.rs  rdev global key listener sidecar (PING/PONG heartbeat)
+  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer

@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicU64;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::Manager;
 
 mod app;
@@ -13,7 +13,9 @@ mod translation;
 mod vocabulary_store;
 
 use app::config::{load_general_config, load_shortcuts, save_general_config};
-use app::keyboard_hook::{HookPingTracker, KeyboardHookProcess, spawn_keyboard_hook};
+use app::keyboard_hook::{
+    HookRules, HookStarted, HookStatus, HookStatusInner, start_keyboard_hook,
+};
 
 /// 读取设置里的历史保存时效（general.historyRetentionDays 天），缺失/非法一律回落默认 30 天。
 /// 与前端 DEFAULT_SETTINGS.general.historyRetentionDays 保持一致。
@@ -56,18 +58,27 @@ pub fn run() {
             use tauri::menu::{MenuBuilder, MenuItemBuilder};
             use tauri::tray::TrayIconBuilder;
 
-            app.manage(KeyboardHookProcess(Arc::new(Mutex::new(None))));
-            app.manage(HookPingTracker(Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0))));
-
             let initial_shortcuts = load_shortcuts(app.handle());
             app.manage(Mutex::new(initial_shortcuts));
+
+            // 全局快捷键：tap 直接跑在主进程的后台线程（v0.1.2 起不再有 keyboard-hook 子进程）。
+            // HookRules 必须在 start_keyboard_hook 之前 manage —— 它读取 ShortcutConfig 并建规则表。
+            app.manage(HookRules(Arc::new(RwLock::new(
+                std::collections::HashMap::new(),
+            ))));
+            app.manage(HookStatus(Arc::new(HookStatusInner {
+                listening: AtomicBool::new(false),
+                listen_event: AtomicBool::new(false),
+                key_events: AtomicU64::new(0),
+            })));
+            app.manage(HookStarted(AtomicBool::new(false)));
 
             // MOSS-TTS 引擎缓存（进程级单实例，避免重复加载 7 个 ONNX session）
             // 仅在编译了 moss-tts-nano 的平台上启用
             #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
             app.manage(commands::tts::TtsEngineCache::default());
 
-            spawn_keyboard_hook(app.handle().clone());
+            start_keyboard_hook(app.handle());
 
             // 初始化翻译引擎表
             db::EngineManager::init(app.handle()).ok();
@@ -178,6 +189,8 @@ pub fn run() {
             commands::windows::show_main_window,
             commands::shortcuts::get_shortcuts_cmd,
             commands::shortcuts::update_shortcuts_cmd,
+            commands::shortcuts::get_hook_status_cmd,
+            commands::shortcuts::open_input_monitoring_cmd,
             commands::settings::get_close_behavior_cmd,
             commands::settings::update_close_behavior_cmd,
             commands::settings::init_database_cmd,

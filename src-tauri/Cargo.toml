@@ -1,6 +1,6 @@
 [package]
 name = "desktop-translation"
-version = "0.1.1"
+version = "0.1.2"
 description = "Desktop Translation App"
 authors = ["you"]
 edition = "2021"
@@ -9,10 +9,6 @@ default-run = "desktop-translation"
 [lib]
 name = "desktop_translation_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
-
-[[bin]]
-name = "keyboard-hook"
-path = "src/bin/keyboard_hook.rs"
 
 [[bin]]
 name = "dictbuild"

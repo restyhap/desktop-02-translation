@@ -43,9 +43,9 @@
 | `⌘ + C + C` | Перевести текущее выделение (всплывающее окно) |
 | `⌘ + C + V` | Показать главное окно |
 
-Обе комбинации можно переназначить в настройках. Глобальный перехват клавиш работает в отдельном процессе `keyboard-hook` (rdev); главный процесс охраняет его сторожевым механизмом PING/PONG и перезапускает, если он перестаёт отвечать.
+Обе комбинации можно переназначить в настройках. Глобальный перехват клавиш (rdev) выполняется в фоновых потоках внутри основного процесса — отдельного вспомогательного процесса больше нет. Изменение горячих клавиш подменяет таблицу правил на лету, без перезапуска перехватчика.
 
-> ⚠️ При первом использовании выдайте приложению разрешение в разделе **System Settings → Privacy & Security → Accessibility**, иначе глобальные горячие клавиши и перевод по выделению не будут работать. Разрешение привязано к подписи кода приложения, поэтому после установки новой версии его может потребоваться выдать снова.
+> ⚠️ При первом использовании выдайте приложению разрешение в разделе **System Settings → Privacy & Security → Input Monitoring** (Контроль клавиатуры и ввода), иначе глобальные горячие клавиши и перевод по выделению не будут работать. Пока разрешение не выдано, приложение показывает предупреждение со ссылкой в один клик на эту панель. Разрешение привязано к хешу кода приложения, поэтому после установки новой версии его нужно выдать заново.
 
 ## Сборка из исходного кода
 
@@ -62,7 +62,7 @@ git clone https://github.com/restyhap/desktop-02-translation.git
 cd desktop-02-translation
 
 pnpm install
-pnpm tauri dev          # dev mode (builds the keyboard-hook / dictbuild sidecars too)
+pnpm tauri dev          # dev mode (also builds the dictbuild sidecar)
 ```
 
 ### Проверки качества
@@ -111,8 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  hook watchdog and event dispatch
-  bin/keyboard_hook.rs  rdev global key listener sidecar (PING/PONG heartbeat)
+  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
