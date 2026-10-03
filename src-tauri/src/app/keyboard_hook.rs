@@ -122,13 +122,38 @@ pub fn reload_hook_rules(app: &tauri::AppHandle) {
     eprintln!("[hook] 规则已热更新：{count} 条");
 }
 
-/// 打开 macOS「输入监控」设置面板；非macOS 返回 false
+/// 打开 macOS「输入监控」设置面板；非 macOS 返回 false。
+///
+/// 深链分两个时代。实测 macOS 26.6.2：旧 URL **不会报错**（`open` 退出码仍为 0，
+/// 系统设置也会被拉起），但会落到「通用」面板而非「输入监控」——这正是 0.1.2
+/// 里用户点了按钮「没反应」的原因，且无法靠返回值/异常判断成败，只能按系统版本分流：
+/// - macOS 13+（System Settings）：`com.apple.settings.PrivacySecurity.extension`
+/// - macOS 12 及更早（System Preferences）：`com.apple.preferences.security`
 #[cfg(target_os = "macos")]
 pub fn open_listen_event_settings() -> bool {
+    let url = if macos_major_version() >= 13 {
+        "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ListenEvent"
+    } else {
+        "x-apple.systempreferences:com.apple.preferences.security?Privacy_ListenEvent"
+    };
     std::process::Command::new("open")
-        .arg("x-apple.systempreferences:com.apple.preferences.security?Privacy_ListenEvent")
-        .spawn()
-        .is_ok()
+        .arg(url)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// 读 macOS 主版本号；读不到时按 13 处理（新版系统占绝对多数，宁可落到无效面板
+/// 也不能在旧系统上打开错误面板）
+#[cfg(target_os = "macos")]
+fn macos_major_version() -> u32 {
+    std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|text| text.split('.').next()?.trim().parse::<u32>().ok())
+        .unwrap_or(13)
 }
 
 #[cfg(not(target_os = "macos"))]
