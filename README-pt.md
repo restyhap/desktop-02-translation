@@ -43,7 +43,7 @@ A versão Intel (x86_64) **não inclui a síntese de voz neural MOSS-TTS**; a pr
 | `⌘ + C + C` | Traduzir a seleção atual (popup) |
 | `⌘ + C + V` | Mostrar a janela principal |
 
-Os dois podem ser regravados nas Configurações. A escuta global de teclas (rdev) roda em threads em segundo plano dentro do processo principal — sem processo auxiliar. Alterações de atalhos substituem a tabela de regras a quente, sem reiniciar a escuta.
+Os dois podem ser regravados nas Configurações. A escuta global de teclas usa um event tap do macOS ligado ao run loop da thread principal — sem processo auxiliar e sem biblioteca de terceiros. Alterações de atalhos substituem a tabela de regras a quente, sem reconstruir o tap.
 
 > ⚠️ No primeiro uso, conceda permissão ao aplicativo em **Ajustes do Sistema → Privacidade e Segurança → Monitorização de entrada**, caso contrário os atalhos globais e a captura da seleção não funcionarão. Enquanto a permissão faltar, o aplicativo exibe um aviso com acesso em um clique a esse painel. A permissão está vinculada ao hash de código do aplicativo, portanto precisa ser concedida novamente após instalar uma nova versão.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ Camadas: o frontend conversa com o Rust apenas por meio de `invoke`; do lado do 
 ## Stack
 
 - **Framework do aplicativo**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Atalhos globais**: rdev (processo sidecar com watchdog de heartbeat)
+- **Atalhos globais**: event tap de macOS próprio (ListenOnly), ligado ao run loop da thread principal
 - **Armazenamento**: SQLite via crate `sqlite` (dicionários, configurações, histórico, vocabulário, chaves de API)
 - **Voz**: Web Speech API (`speechSynthesis`)
 - **Plugins do Tauri**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

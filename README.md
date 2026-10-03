@@ -43,7 +43,7 @@ The Intel (x86_64) build **does not include MOSS-TTS neural speech synthesis**; 
 | `⌘ + C + C` | Translate the current selection (popup) |
 | `⌘ + C + V` | Show the main window |
 
-Both are re-recordable in Settings. Global key listening (rdev) runs on background threads inside the main process — no sidecar process. Shortcut changes hot-swap the rule table without restarting the listener.
+Both are re-recordable in Settings. Global key listening uses a macOS event tap attached to the main thread's run loop — no sidecar process and no third-party hook library. Shortcut changes hot-swap the rule table without rebuilding the tap.
 
 > ⚠️ On first use, grant the app permission under **System Settings → Privacy & Security → Input Monitoring**, otherwise global hotkeys and selection capture will not respond. While the permission is missing, Settings shows a warning banner with a one-click shortcut to that pane. The permission is bound to the app's code hash, so it must be re-granted after installing a new build.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ Layering: the frontend only talks to Rust through `invoke`; on the Rust side `co
 ## Stack
 
 - **App framework**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Global hotkeys**: rdev (sidecar process with heartbeat watchdog)
+- **Global hotkeys**: self-built macOS event tap (ListenOnly), attached to the main thread run loop
 - **Storage**: SQLite via the `sqlite` crate (dictionaries, settings, history, vocabulary, API keys)
 - **Speech**: Web Speech API (`speechSynthesis`)
 - **Tauri plugins**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

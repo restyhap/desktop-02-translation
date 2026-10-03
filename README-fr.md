@@ -43,7 +43,7 @@ La version Intel (x86_64) **n'inclut pas la synthèse vocale neuronale MOSS-TTS*
 | `⌘ + C + C` | Traduire la sélection courante (fenêtre) |
 | `⌘ + C + V` | Afficher la fenêtre principale |
 
-Les deux peuvent être redéfinis dans les réglages. L'écoute globale des touches (rdev) s'exécute sur des threads de fond du processus principal — plus aucun processus séparé. La modification des raccourcis remplace la table de règles à chaud, sans redémarrage de l'écouteur.
+Les deux peuvent être redéfinis dans les réglages. L'écoute globale des touches utilise un event tap macOS attaché à la run loop du thread principal — aucun processus séparé, aucune bibliothèque tierce. La modification des raccourcis remplace la table de règles à chaud, sans reconstruire le tap.
 
 > ⚠️ À la première utilisation, accordez à l'application l'autorisation dans **Réglages Système → Confidentialité et sécurité → Surveillance des entrées**, sinon les raccourcis globaux et la capture de la sélection ne fonctionneront pas. Tant que l'autorisation manque, l'application affiche un avertissement avec un accès en un clic à ce panneau. L'autorisation est liée à l'empreinte de code de l'application : elle doit être accordée à nouveau après une nouvelle version.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ Couches : le frontend ne parle au Rust qu'à travers `invoke` ; côté Rust, `co
 ## Pile technique
 
 - **Framework applicatif** : Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Raccourcis globaux** : rdev (processus sidecar avec chien de garde par heartbeat)
+- **Raccourcis globaux** : event tap macOS maison (ListenOnly), attaché à la run loop du thread principal
 - **Stockage** : SQLite via le crate `sqlite` (dictionnaires, réglages, historique, vocabulaire, clés d'API)
 - **Synthèse vocale** : Web Speech API (`speechSynthesis`)
 - **Plugins Tauri** : autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

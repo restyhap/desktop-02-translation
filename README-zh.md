@@ -43,7 +43,7 @@ Intel（x86_64）版本**不包含 MOSS-TTS 神经网络语音合成**；发音�
 | `⌘ + C + C` | 翻译当前选中的文本（弹窗） |
 | `⌘ + C + V` | 显示主窗口 |
 
-两者都可以在设置中重新录制。全局按键监听（rdev）以后台线程运行在主进程内部，不再有独立子进程；修改快捷键时热替换规则表，无需重启监听。
+两者都可以在设置中重新录制。全局按键监听使用挂在主线程 run loop 上的 macOS 事件 tap，没有独立子进程，也不依赖第三方监听库；修改快捷键时热替换规则表，无需重建 tap。
 
 > ⚠️ 首次使用时，请在**系统设置 → 隐私与安全性 → 输入监控**中授予本应用权限，否则全局快捷键和划词捕获都不会响应。权限缺失时设置页会显示警告横幅，并提供一键跳转到该面板。该权限与应用代码哈希绑定，安装新版本后需要重新授予。
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ release.sh              dual-architecture build + dual-host release sync script
 ## 技术栈
 
 - **应用框架**：Tauri 2.12（Rust）+ React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **全局快捷键**：rdev（带心跳看门狗的 sidecar 进程）
+- **全局快捷键**：自建 macOS 事件 tap（ListenOnly），挂在主线程 run loop 上
 - **存储**：通过 `sqlite` crate 使用 SQLite（词典、设置、历史记录、生词本、API 密钥）
 - **语音**：Web Speech API（`speechSynthesis`）
 - **Tauri 插件**：autostart (LaunchAgent)、window-state、global-shortcut、single-instance、clipboard-manager、dialog

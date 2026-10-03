@@ -43,7 +43,7 @@
 | `⌘ + C + C` | Перевести текущее выделение (всплывающее окно) |
 | `⌘ + C + V` | Показать главное окно |
 
-Обе комбинации можно переназначить в настройках. Глобальный перехват клавиш (rdev) выполняется в фоновых потоках внутри основного процесса — отдельного вспомогательного процесса больше нет. Изменение горячих клавиш подменяет таблицу правил на лету, без перезапуска перехватчика.
+Обе комбинации можно переназначить в настройках. Глобальный перехват клавиш использует event tap macOS, подключённый к run loop главного потока — отдельного вспомогательного процесса и сторонних библиотек нет. Изменение горячих клавиш подменяет таблицу правил на лету, без пересоздания tap.
 
 > ⚠️ При первом использовании выдайте приложению разрешение в разделе **System Settings → Privacy & Security → Input Monitoring** (Контроль клавиатуры и ввода), иначе глобальные горячие клавиши и перевод по выделению не будут работать. Пока разрешение не выдано, приложение показывает предупреждение со ссылкой в один клик на эту панель. Разрешение привязано к хешу кода приложения, поэтому после установки новой версии его нужно выдать заново.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ release.sh              dual-architecture build + dual-host release sync script
 ## Технологии
 
 - **Каркас приложения**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Глобальные горячие клавиши**: rdev (отдельный процесс со сторожевым механизмом heartbeat)
+- **Глобальные горячие клавиши**: собственный event tap macOS (ListenOnly), подключённый к run loop главного потока
 - **Хранилище**: SQLite через крейт `sqlite` (словари, настройки, история, словарь слов, API-ключи)
 - **Речь**: Web Speech API (`speechSynthesis`)
 - **Плагины Tauri**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

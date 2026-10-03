@@ -43,7 +43,7 @@ Der Intel-Build (x86_64) **enthält keine MOSS-TTS neuronale Sprachsynthese**; d
 | `⌘ + C + C` | Aktuelle Auswahl übersetzen (Popup) |
 | `⌘ + C + V` | Hauptfenster anzeigen |
 
-Beide lassen sich in den Einstellungen neu aufzeichnen. Die globale Tastaturüberwachung (rdev) läuft in Hintergrundthreads innerhalb des Hauptprozesses — kein Hilfsprozess mehr. Änderungen an Kurzbefehlen werden per Hot-Swap übernommen, ohne den Listener neu zu starten.
+Beide lassen sich in den Einstellungen neu aufzeichnen. Die globale Tastaturüberwachung nutzt einen macOS-Event-Tap im Run-Loop des Hauptthreads — kein Hilfsprozess und keine Drittanbieter-Bibliothek. Änderungen an Kurzbefehlen werden per Hot-Swap übernommen, ohne den Tap neu aufzubauen.
 
 > ⚠️ Gewähren Sie der App bei der ersten Verwendung unter **Systemeinstellungen → Datenschutz & Sicherheit → Eingabeüberwachung** die entsprechende Berechtigung, sonst reagieren globale Hotkeys und die Erfassung von Auswahlen nicht. Solange die Berechtigung fehlt, zeigt die App einen Warnhinweis mit Ein-Klick-Sprung zu diesem Bereich. Die Berechtigung ist an den Code-Hash der App gebunden und muss nach einer neuen Version erneut erteilt werden.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ Schichtung: Das Frontend kommuniziert ausschließlich über `invoke` mit Rust; a
 ## Technologie-Stack
 
 - **App-Framework**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Globale Hotkeys**: rdev (Sidecar-Prozess mit Heartbeat-Watchdog)
+- **Globale Hotkeys**: selbst gebauter macOS-Event-Tap (ListenOnly) im Run-Loop des Hauptthreads
 - **Speicher**: SQLite über das `sqlite`-Crate (Wörterbücher, Einstellungen, Historie, Wortschatz, API-Schlüssel)
 - **Sprache**: Web Speech API (`speechSynthesis`)
 - **Tauri-Plugins**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

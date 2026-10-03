@@ -43,7 +43,7 @@ Intel(x86_64) 빌드에는 **MOSS-TTS 신경 음성 합성이 포함되지 않�
 | `⌘ + C + C` | 현재 선택 영역 번역(팝업) |
 | `⌘ + C + V` | 주 창 표시 |
 
-두 단축키 모두 설정에서 다시 녹화할 수 있습니다. 전역 키 리스닝(rdev)은 별도 프로세스 없이 주 프로세스 내부의 백그라운드 스레드에서 동작합니다. 단축키를 바꾸면 리스너를 재시작하지 않고 규칙 테이블을 핫스왑합니다.
+두 단축키 모두 설정에서 다시 녹화할 수 있습니다. 전역 키 리스닝은 주 스레드 run loop에 붙인 macOS event tap을 사용합니다 — 별도 프로세스도, 서드파티 리스닝 라이브러리도 없습니다. 단축키를 바꾸면 tap을 다시 만들지 않고 규칙 테이블을 핫스왑합니다.
 
 > ⚠️ 처음 사용할 때 **System Settings → Privacy & Security → Input Monitoring**에서 앱 권한을 허용하지 않으면 전역 단축키와 선택 영역 캡처가 동작하지 않습니다. 권한이 없으면 설정 화면에 경고 배너가 뜨고 해당 패널로 한 번에 이동할 수 있습니다. 권한은 앱 코드 해시에 묶여 있어서 새 버전을 설치하면 권한을 다시 허용해야 합니다.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ release.sh              dual-architecture build + dual-host release sync script
 ## 기술 스택
 
 - **앱 프레임워크**: Tauri 2.12(Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **전역 단축키**: rdev(heartbeat 워치독을 갖춘 별도 프로세스)
+- **전역 단축키**: 직접 만든 macOS event tap(ListenOnly)을 주 스레드 run loop에 연결
 - **저장소**: `sqlite` 크레이트를 통한 SQLite(사전, 설정, 기록, 단어장, API 키)
 - **음성**: Web Speech API(`speechSynthesis`)
 - **Tauri 플러그인**: autostart(LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

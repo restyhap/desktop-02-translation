@@ -43,7 +43,7 @@ La build Intel (x86_64) **non include la sintesi vocale neurale MOSS-TTS**; la p
 | `⌘ + C + C` | Traduci la selezione corrente (popup) |
 | `⌘ + C + V` | Mostra la finestra principale |
 
-Entrambe sono riconfigurabili nelle Impostazioni. L'ascolto globale delle chiavi (rdev) viene eseguito su thread in background del processo principale — nessun processo separato. Le modifiche alle scorciatoie sostituiscono a caldo la tabella delle regole, senza riavviare l'ascolto.
+Entrambe sono riconfigurabili nelle Impostazioni. L'ascolto globale delle chiavi usa un event tap di macOS agganciato al run loop del thread principale: nessun processo separato né libreria di terze parti. Le modifiche alle scorciatoie sostituiscono a caldo la tabella delle regole, senza ricostruire il tap.
 
 > ⚠️ Al primo utilizzo, concedi all'app il permesso in **Impostazioni di Sistema → Privacy e Sicurezza → Monitoraggio input**, altrimenti le scorciatoie globali e la cattura della selezione non funzioneranno. Finché il permesso manca, l'app mostra un avviso con accesso in un clic a quel pannello. Il permesso è legato all'hash del codice dell'app, quindi va riconcesso dopo una nuova versione.
 
@@ -111,7 +111,7 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: rdev event tap on in-process threads
+  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
@@ -126,7 +126,7 @@ Stratificazione: il frontend parla con Rust solo tramite `invoke`; lato Rust `co
 ## Stack
 
 - **Framework applicativo**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Scorciatoie globali**: rdev (processo sidecar con watchdog heartbeat)
+- **Scorciatoie globali**: event tap macOS creato internamente (ListenOnly), agganciato al run loop del thread principale
 - **Archiviazione**: SQLite tramite il crate `sqlite` (dizionari, impostazioni, cronologia, vocabolario, chiavi API)
 - **Voce**: Web Speech API (`speechSynthesis`)
 - **Plugin Tauri**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog
