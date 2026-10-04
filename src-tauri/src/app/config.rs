@@ -113,38 +113,3 @@ pub fn save_shortcuts(app: &tauri::AppHandle, config: &ShortcutConfig) {
         eprintln!("[shortcuts] 保存到数据库失败: {:?}", e);
     }
 }
-
-/// "⌘+C+C" / "Ctrl+Shift+A" → "meta:C,C"（事件 tap 匹配用的内部格式）
-///
-/// 注意右半区修饰键（`MetaRight` / `ControlRight` / …）：前端录制器用 DOM
-/// `event.key`，按住右 ⌘ 得到的就是这些名字，必须一并归到对应修饰键，否则会被
-/// 当成普通键（「⌘+META」这样的组合永远匹配不上）。
-pub fn extract_keys_from_shortcut(shortcut: &str) -> String {
-    let mut modifiers = Vec::new();
-    let mut keys = Vec::new();
-    for part in shortcut.split('+') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let modifier = match part {
-            "Ctrl" | "Control" | "ControlRight" => Some("ctrl"),
-            "⌘" | "Meta" | "Command" | "MetaRight" => Some("meta"),
-            "⇧" | "Shift" | "ShiftRight" => Some("shift"),
-            "⌥" | "Alt" | "AltRight" => Some("alt"),
-            _ => None,
-        };
-        match modifier {
-            Some(name) => {
-                if !modifiers.contains(&name) {
-                    modifiers.push(name);
-                }
-            }
-            None => keys.push(part.to_uppercase()),
-        }
-    }
-    if keys.is_empty() {
-        keys.push("C".to_string());
-    }
-    format!("{}:{}", modifiers.join(","), keys.join(","))
-}

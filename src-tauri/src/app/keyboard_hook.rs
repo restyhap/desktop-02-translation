@@ -27,8 +27,9 @@
 //! 3. **静默失败必须有 UI 侧可见提示**：用户看不到后台日志，`HookStatus` 三个诊断量
 //!    由**主页**的 `ShortcutPermBanner` 轮询展示（`listening` / `listen_event` / `key_events`）。
 //!
-//! 平台：事件 tap 是 macOS 专有 API，本模块只在 macOS 编译（见文件末尾 extern 块的
-//! `cfg` 门控）；其余逻辑是纯 Rust。
+//! 平台：事件 tap 是 macOS 专有 API，**本模块只在 macOS 编译**（`app/mod.rs` 按平台路由）；
+//! 非 macOS 走同名 API 的占位模块 `keyboard_hook_unsupported.rs`，上报 `supported=false`，
+//! 前端据此隐藏「输入监控」横幅。
 
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
@@ -43,7 +44,7 @@ use serde::Serialize;
 use tauri::{Emitter, LogicalPosition, Manager};
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
-use crate::app::config::{extract_keys_from_shortcut, ShortcutConfig};
+use crate::app::config::ShortcutConfig;
 
 /// 连击序列的两次按键最大间隔
 const SEQ_WINDOW: Duration = Duration::from_millis(500);
@@ -929,6 +930,44 @@ fn anchor_position(
 }
 
 // ==================== 规则构建与快捷键解析 ====================
+
+/// "⌘+C+C" / "Ctrl+Shift+A" → "meta:C,C"（事件 tap 匹配用的内部格式）
+///
+/// 注意右半区修饰键（`MetaRight` / `ControlRight` / …）：前端录制器用 DOM
+/// `event.key`，按住右 ⌘ 得到的就是这些名字，必须一并归到对应修饰键，否则会被
+/// 当成普通键（「⌘+META」这样的组合永远匹配不上）。
+///
+/// 原在 `app/config.rs`；它只被本模块消费，而本模块只在 macOS 编译，
+/// 留在 config.rs 会让非 macOS 构建多出一处 dead_code。
+fn extract_keys_from_shortcut(shortcut: &str) -> String {
+    let mut modifiers = Vec::new();
+    let mut keys = Vec::new();
+    for part in shortcut.split('+') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let modifier = match part {
+            "Ctrl" | "Control" | "ControlRight" => Some("ctrl"),
+            "⌘" | "Meta" | "Command" | "MetaRight" => Some("meta"),
+            "⇧" | "Shift" | "ShiftRight" => Some("shift"),
+            "⌥" | "Alt" | "AltRight" => Some("alt"),
+            _ => None,
+        };
+        match modifier {
+            Some(name) => {
+                if !modifiers.contains(&name) {
+                    modifiers.push(name);
+                }
+            }
+            None => keys.push(part.to_uppercase()),
+        }
+    }
+    if keys.is_empty() {
+        keys.push("C".to_string());
+    }
+    format!("{}:{}", modifiers.join(","), keys.join(","))
+}
 
 /// 按当前配置构建规则表；空快捷键的项直接跳过
 fn build_rules(config: &ShortcutConfig) -> HashMap<String, Rule> {

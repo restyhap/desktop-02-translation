@@ -8,7 +8,7 @@ name: CI
 #   libdbus-sys 处直接 panic），这些没法在 macOS 上交叉装。
 #
 # 注意：当前**只有 macOS 有全局快捷键实现**（app/keyboard_hook.rs 的 CGEventTap）。
-# Windows/Linux 上 ensure_listener 会提前返回，划词/快捷键不可用；本 CI 只保证
+# Windows/Linux 上全局快捷键走占位模块（app/keyboard_hook_unsupported.rs），划词/快捷键不可用；本 CI 只保证
 # 「能构建出产物」，不代表功能对等。见 HOOK_SUPPORTED 与 keyboard_hook.rs 文件头。
 
 on:

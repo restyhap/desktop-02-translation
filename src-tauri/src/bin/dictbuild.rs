@@ -179,7 +179,23 @@ fn decompress_dsl_dz(path: &Path) -> Result<String, String> {
     let mut decoder = flate2::read::GzDecoder::new(file);
     let mut bytes: Vec<u8> = Vec::new();
     decoder.read_to_end(&mut bytes).map_err(|e| format!("解压 {} 失败: {}", path.display(), e))?;
-    let utf16: Vec<u16> = if bytes.starts_with(&[0xff, 0xfe]) { bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() } else { bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() };
+    // 用 `as_chunks` 而不是 `chunks_exact(2)`：clippy 1.99 起固定块长的 chunks_exact 会触发
+    // `chunks_exact_to_as_chunks`，CI 的 `-D warnings` 会直接判失败。二者截断语义一致（余数丢弃）。
+    let utf16: Vec<u16> = if bytes.starts_with(&[0xff, 0xfe]) {
+        bytes[2..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
+            .collect()
+    } else {
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
+            .collect()
+    };
     let mut text = String::from_utf16_lossy(&utf16);
     if text.starts_with("\u{feff}") { text = text[3..].to_string(); }
 
