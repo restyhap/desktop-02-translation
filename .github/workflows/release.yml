@@ -152,7 +152,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # 必须 checkout **main** 而不是 tag：
+      # 最后一步要把 latest.json commit 上去并 `git push origin HEAD:main`。
+      # 若 checkout 的是 tag commit，而该 tag 又落后于 main（打完 tag 之后 main
+      # 还有新提交，这在「修 bug 后重打同版本号」时必然发生），push 就是
+      # non-fast-forward，**必被拒**，latest.json 永远推不上去（实测踩过）。
+      # fetch-depth: 0 同时拿到完整历史与全部 tag —— 下面读 tag 注释当 release
+      # notes 要用到 annotated tag 对象，浅克隆下 `git tag -l` 读不出 %(contents)。
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -223,8 +233,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add latest.json
           git commit -m "chore(release): update latest.json to ${GITHUB_REF_NAME}" || echo "无变化"
+          # 发布期间可能有人往 main 推了新提交，rebase 一下再 push，
+          # 否则又是一次 non-fast-forward（checkout main 只解决了「tag 落后」这一种）。
+          git pull --rebase origin main
           git push origin HEAD:main
           git remote add gitee "https://gitee.com/$REPO_GITEE.git" 2>/dev/null || true
+          git pull --rebase "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" main
           git push "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" HEAD:main
 
       - name: Mirror release to Gitee

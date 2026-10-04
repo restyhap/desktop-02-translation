@@ -1,5 +1,15 @@
 #!/bin/bash
-# desktop-translation 一键发布脚本：构建双架构 dmg + .app.tar.gz + 发布 GitHub/Gitee Releases
+# desktop-translation **macOS 本机**发布脚本：构建双架构 dmg + .app.tar.gz + 发布 GitHub/Gitee Releases
+#
+# ⚠️ 四平台正式发布**不要用这个脚本**，用 CI：
+#     git tag -a v<ver> -m "..." && git push origin main --tags && git push gitee main --tags
+#   release.yml 的 build 矩阵会在原生 runner 上出 macOS(arm/x64) / Windows / Linux
+#   四个平台的安装包与 .sig，再由 publish job 合并成**四平台** latest.json。
+#
+# 为什么必须区分：本脚本只构建 macOS 两架构，生成的 latest.json **只有
+# darwin-aarch64 / darwin-x86_64 两个 key**。而 Tauri 是**先校验整份清单再比版本号**
+# —— 缺了 windows-* / linux-* 就等于把这两个平台的更新一起弄坏（不是"没更新"，
+# 是"检查直接失败"）。脚本内置守卫会拦下这种覆盖（见下方「清单覆盖守卫」）。
 #
 # 用法：bash release.sh
 #   1. 读取 ~/.config/release-tokens/desktop-translation.env 中的
@@ -96,6 +106,42 @@ NOTES=$(git tag -l "v$VERSION" --format='%(contents:subject)')
 # 这里先写两个片段（各自含**真实签名**与直链），再合并；脚本会逐条校验，
 # 任何一条不合法就直接失败且**不写出清单**，避免半成品 latest.json 弄坏
 # 所有平台的更新（Tauri 会先校验整份清单再比版本号）。
+#
+# ---------- 清单覆盖守卫 ----------
+# merge-latest-json.mjs 只按传入片段拼装，**不会保留清单里已有的平台**。
+# 本脚本只有 macOS 片段，所以一旦远端清单已由 CI 写出四平台版本，
+# 直接覆盖就会把 Windows / Linux 的更新入口抹掉。开工前先看一眼远端现状：
+# 有非 darwin 平台 → 拒绝（除非显式 ALLOW_DARWIN_ONLY_MANIFEST=1）。
+REMOTE_MANIFEST="$TMP/remote-latest.json"
+if curl -sfL -o "$REMOTE_MANIFEST" \
+  "https://gitee.com/$REPO_GITEE/raw/main/latest.json" 2>/dev/null \
+  && [ -s "$REMOTE_MANIFEST" ]; then
+  REMOTE_PLATFORMS=$(node -e '
+    const fs = require("fs");
+    try {
+      const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      console.log(Object.keys(m.platforms || {}).join(" "));
+    } catch { console.log(""); }
+  ' "$REMOTE_MANIFEST")
+  NON_DARWIN=$(echo "$REMOTE_PLATFORMS" | tr ' ' '\n' | grep -v '^darwin-' | grep -c . || true)
+  if [ "$NON_DARWIN" != "0" ] && [ "${ALLOW_DARWIN_ONLY_MANIFEST:-0}" != "1" ]; then
+    cat >&2 <<EOF
+==> 拒绝覆盖：远端 latest.json 已包含非 macOS 平台（$(echo "$REMOTE_PLATFORMS" | tr ' ' ',' | sed 's/,$//')）
+   本脚本只产出 macOS 两架构片段，覆盖后会让 Windows / Linux 的**应用内更新整体失效**
+   （Tauri 先校验整份清单再比版本号，缺条目即检查失败，不是"该平台没新版本"）。
+
+   四平台正式发布请走 CI：
+       git tag -a v$VERSION -m "..." && git push origin main --tags && git push gitee main --tags
+   确实只想发 macOS 时，显式确认后再跑：
+       ALLOW_DARWIN_ONLY_MANIFEST=1 bash release.sh
+EOF
+    exit 1
+  fi
+  echo "==> 远端清单平台: ${REMOTE_PLATFORMS:-（空）}（可继续）"
+else
+  echo "==> 远端暂无 latest.json（首次发布），本脚本将写出 macOS 两架构清单"
+fi
+
 SIG_BASE="https://github.com/$REPO_GH/releases/download/v$VERSION"
 node -e '
 const fs = require("fs");
@@ -127,7 +173,6 @@ fi
 git push origin main --tags 2>&1 | tail -1
 git push gitee main --tags 2>&1 | tail -1
 
-# ---------- GitHub ----------
 # ---------- GitHub ----------
 # 创建 v$VERSION 发行版；失败（已存在等）则回退查询现有 release 的 id
 GH_JSON=$(curl -s -H "Authorization: Bearer ${GH_TOKEN:?需要 GH_TOKEN}" \
