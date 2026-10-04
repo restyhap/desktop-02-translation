@@ -70,16 +70,15 @@ jobs:
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
             patchelf libssl-dev libdbus-1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
+      # 用 npm 而非 pnpm：本仓库按 .gitignore 约定**只提交 package-lock.json**
+      # （pnpm-lock.yaml 被排除），所以 `cache: pnpm` 与 `--frozen-lockfile`
+      # 都会因缺少 pnpm lockfile 而直接失败 —— 2026-10-04 首次 CI 四个平台全挂在这。
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+          cache: npm
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -92,7 +91,7 @@ jobs:
       # 签名：这里必须用「内容」形式。Tauri 文档里的 .env 写法在这里无效，
       # Secrets 不能靠文件注入环境变量。
       - name: Build and sign
-        run: pnpm tauri build --target ${{ matrix.target }} ${{ matrix.bundle-args }}
+        run: npm run tauri -- build --target ${{ matrix.target }} ${{ matrix.bundle-args }}
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

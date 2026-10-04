@@ -59,16 +59,15 @@ jobs:
             libsoup-3.0-dev \
             libjavascriptcoregtk-4.1-dev
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
+      # 用 npm 而非 pnpm：本仓库按 .gitignore 约定**只提交 package-lock.json**
+      # （pnpm-lock.yaml 被排除），所以 `cache: pnpm` 与 `--frozen-lockfile`
+      # 都会因缺少 pnpm lockfile 而直接失败 —— 2026-10-04 首次 CI 四个平台全挂在这。
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: pnpm
+          cache: npm
 
-      - run: pnpm install --frozen-lockfile
+      - run: npm ci
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -81,7 +80,7 @@ jobs:
       # --no-bundle：CI 只验证「能编译」。打完整 bundle 交给 release 工作流，
       # 否则每次 push 都要跑四套打包，慢且没必要。
       - name: Build
-        run: pnpm tauri build --no-bundle --target ${{ matrix.rust-target }}
+        run: npm run tauri -- build --no-bundle --target ${{ matrix.rust-target }}
         env:
           # 编译期不需要签名密钥（--no-bundle 不产出 updater 制品），
           # 但显式置空可避免 CI 日志误以为需要密钥。
@@ -92,4 +91,4 @@ jobs:
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target ${{ matrix.rust-target }} -- -D warnings
 
       - name: Frontend typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
