@@ -227,17 +227,23 @@ jobs:
       - name: Push latest.json to both remotes
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          # 这一步要往 Gitee 推 main。漏声明会让 `set -u` 直接报
+          # 「GITEE_TOKEN: unbound variable」而中断，且中断点在 origin push 之后 ——
+          # 症状是 GitHub 有 latest.json、Gitee 没有，Release 也建了但没镜像过去。
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Gitee remote 要在 pull/push 之前就位（下面的 token URL 形式不依赖它，
+          # 但保留 remote 便于失败时手工排查）
+          git remote add gitee "https://gitee.com/$REPO_GITEE.git" 2>/dev/null || true
           git add latest.json
           git commit -m "chore(release): update latest.json to ${GITHUB_REF_NAME}" || echo "无变化"
           # 发布期间可能有人往 main 推了新提交，rebase 一下再 push，
           # 否则又是一次 non-fast-forward（checkout main 只解决了「tag 落后」这一种）。
           git pull --rebase origin main
           git push origin HEAD:main
-          git remote add gitee "https://gitee.com/$REPO_GITEE.git" 2>/dev/null || true
           git pull --rebase "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" main
           git push "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" HEAD:main
 
