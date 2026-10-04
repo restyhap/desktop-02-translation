@@ -12,7 +12,7 @@ name: Release
 #   GITEE_TOKEN                        Gitee 发布权限
 #
 # 注意：Windows/Linux 目前**划词翻译不可用**（全局热键是 macOS 专属，占位实现）。
-# 见 src-tauri/src/app/keyboard_hook.rs 的 HOOK_SUPPORTED。发布前请确认这是有意的。
+# 见 src-tauri/src/app/keyboard_hook_unsupported.rs（`HOOK_SUPPORTED=false`）。发布前请确认这是有意的。
 
 on:
   push:
@@ -68,7 +68,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
-            patchelf libssl-dev libdbus-1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+            patchelf libssl-dev libdbus-1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
+            libfuse2
 
       # 用 npm 而非 pnpm：本仓库按 .gitignore 约定**只提交 package-lock.json**
       # （pnpm-lock.yaml 被排除），所以 `cache: pnpm` 与 `--frozen-lockfile`
@@ -95,33 +96,54 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # ubuntu-22.04 runner 无 FUSE，而 AppImage 打包器（linuxdeploy）自身就是 AppImage，
+          # 直接执行会 "fuse: device not found"；extract-and-run 让它解包后再跑。
+          APPIMAGE_EXTRACT_AND_RUN: ${{ runner.os == 'Linux' && '1' || '0' }}
 
-      # 产物用 glob 收集，不硬编码路径 —— bundle 目录布局随 Tauri 版本变化，
-      # 硬编码是最容易在发版当天炸掉的地方。
-      - name: Collect updater artifact
+      # 产物收集：updater 制品（带签名）+ 各平台安装包（dmg）。用 glob 不硬编码路径，
+      # 但必须处理三件事（"首跑必炸" 的坑）：
+      # 1) 产物名含空格（"Desktop Translation.app.tar.gz"），`for f in $(find ...)` 会被
+      #    词分割拆碎；改用 `-print0` + `read -d ''`。
+      # 2) macOS 的 .app.tar.gz 名字里既没版本也没架构，两个架构同名会互相覆盖（上传时
+      #    --clobber，清单指向同一文件 → 必有一个架构更新坏掉）；统一改成 release.sh 的
+      #    DesktopTranslation_<ver>_<aarch64|x64>.app.tar.gz。
+      # 3) dmg 没有 .sig（Tauri 只给 updater 制品签名），按"安装包"单独收集、不配签名。
+      - name: Collect release artifacts
         shell: bash
         run: |
           set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist-updater
-          shopt -s nullglob
-          # updater 实际消费的制品：macOS 是 .app.tar.gz，Linux 是 AppImage，Windows 是 .exe
           found=0
-          for f in $(find src-tauri/target/${{ matrix.target }}/release/bundle -type f \
-                       \( -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*setup.exe' -o -name '*.exe' \) \
-                       ! -name '*.sig' 2>/dev/null); do
-            sig="$f.sig"
-            [ -f "$sig" ] || { echo "缺少签名文件，跳过: $f"; continue; }
+          while IFS= read -r -d '' f; do
             base="$(basename "$f" | tr -d ' ')"
-            cp "$f" "dist-updater/$base"
-            cp "$sig" "dist-updater/$base.sig"
-            found=$((found+1))
-          done
-          [ "$found" -gt 0 ] || { echo "::error::未找到任何带签名的 updater 制品"; exit 1; }
+            if [ "$base" = "DesktopTranslation.app.tar.gz" ]; then
+              case "${{ matrix.platform-key }}" in
+                darwin-aarch64) base="DesktopTranslation_${VERSION}_aarch64.app.tar.gz" ;;
+                darwin-x86_64)  base="DesktopTranslation_${VERSION}_x64.app.tar.gz" ;;
+              esac
+            fi
+            case "$f" in
+              *.dmg)
+                cp "$f" "dist-updater/$base"
+                found=$((found+1))
+                ;;
+              *)
+                [ -f "$f.sig" ] || { echo "缺少签名文件，跳过: $f"; continue; }
+                cp "$f" "dist-updater/$base"
+                cp "$f.sig" "dist-updater/$base.sig"
+                found=$((found+1))
+                ;;
+            esac
+          done < <(find "src-tauri/target/${{ matrix.target }}/release/bundle" -type f \
+                     \( -name '*.app.tar.gz' -o -name '*.AppImage' -o -name '*setup.exe' -o -name '*.exe' -o -name '*.dmg' \) \
+                     -print0 2>/dev/null)
+          [ "$found" -gt 0 ] || { echo "::error::未找到任何可发布产物"; exit 1; }
           ls -la dist-updater
 
       - uses: actions/upload-artifact@v4
         with:
-          name: updater-${{ matrix.platform-key }}
+          name: release-${{ matrix.platform-key }}
           path: dist-updater/
           if-no-files-found: error
 
@@ -145,12 +167,14 @@ jobs:
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p fragments
-          for d in artifacts/updater-*/; do
-            KEY="$(basename "$d" | sed 's/^updater-//')"
+          for d in artifacts/release-*/; do
+            KEY="$(basename "$d" | sed 's/^release-//')"
             for f in "$d"*.sig; do
               [ -e "$f" ] || continue
-              [ -f "$f.sig" ] || continue
               ARTIFACT="${f%.sig}"
+              # 注意是 ARTIFACT 而非 "$f.sig"：后者等于 sig.sig，永远不存在，
+              # 会把所有片段都 continue 掉（首跑会在这里静默产出空清单并失败）。
+              [ -f "$ARTIFACT" ] || continue
               node -e '
                 const fs = require("fs");
                 const [sigPath, out, platform, url] = process.argv.slice(1);
@@ -177,11 +201,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           set -euo pipefail
-          gh release create "${GITHUB_REF_NAME}" \
-            --repo "$REPO_GH" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file <(git tag -l "${GITHUB_REF_NAME}" --format='%(contents)') \
-            || gh release upload "${GITHUB_REF_NAME}" --repo "$REPO_GH" --clobber
+          # 已存在（重跑）则跳过创建；不存在才建，用 tag 注释当 release notes。
+          # 旧写法 `create || upload` 在重跑时会让 upload 不带任何文件直接失败。
+          if ! gh release view "${GITHUB_REF_NAME}" --repo "$REPO_GH" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --repo "$REPO_GH" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file <(git tag -l "${GITHUB_REF_NAME}" --format='%(contents)')
+          fi
           gh release upload "${GITHUB_REF_NAME}" --repo "$REPO_GH" --clobber \
             latest.json $(find artifacts -type f ! -name '*.sig')
 
