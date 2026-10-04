@@ -1,0 +1,23 @@
+{
+  "version": "0.1.6",
+  "notes": "v0.1.6 —— 四平台首次发布（macOS aarch64/x64 + Windows x64 + Linux x64）",
+  "pub_date": "2026-10-04T16:46:07Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "M0/uLPSprOidK4s/eofC+XOB5/2OEC3/CbQto0tR5VoaaBBxc4x8ZRW5SNMi5g4kVeW2/ptzchwJsAxkrxiJAg==",
+      "url": "https://github.com/restyhap/desktop-02-translation/releases/download/v0.1.6/DesktopTranslation_0.1.6_aarch64.app.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "8Liur8hMve3YVzBtxB2JvVTi9/O64imyVUN+UK6OGb+HbI5+XJYap4u6pF6JO6FM9x65csvokPFK1cVXemKjDw==",
+      "url": "https://github.com/restyhap/desktop-02-translation/releases/download/v0.1.6/DesktopTranslation_0.1.6_x64.app.tar.gz"
+    },
+    "linux-x86_64": {
+      "signature": "Qshxj7EAUgvS8KYUZZ69O+183LEQ+jl1CpRgX4RwOGNECsf5gji6hDKIJzIG/ll/bl0UTtCNM634UkdFeolOCg==",
+      "url": "https://github.com/restyhap/desktop-02-translation/releases/download/v0.1.6/DesktopTranslation_0.1.6_amd64.AppImage"
+    },
+    "windows-x86_64": {
+      "signature": "RAIYbKU+e4PcVN0W0/WEQ0go/LgiyPtQJHYx58d8k3kN3WoFOTu6pNq1hYf+PGJWnU9chc1ACZ8ifi4zId4GBA==",
+      "url": "https://github.com/restyhap/desktop-02-translation/releases/download/v0.1.6/DesktopTranslation_0.1.6_x64-setup.exe"
+    }
+  }
+}
