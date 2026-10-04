@@ -3,6 +3,10 @@
 > 本文件自动注入每次会话。**详细内容按需读子文档**：先看下表「何时读」，匹配任务再读对应文件。
 > 规则优先级：用户全局 AGENTS.md > 本文件。
 
+## 会话约定
+
+- 【语言】用中文回复；代码注释用中文。（与用户全局规范一致）
+
 ## 项目一句话
 
 Tauri 2 + React 19 桌面划词翻译应用（macOS；aarch64 + Intel x64 双架构发布，GitHub + Gitee 双平台）。
@@ -56,7 +60,7 @@ bash release.sh
 ## 跨平台构建现状（CI 已通，特性未补）
 
 - `.github/workflows/ci.yml` 在**原生 runner**（macOS ×2 / windows-latest / ubuntu-22.04）跑 `tauri build --no-bundle` + clippy + typecheck。本机交叉编译不可行：Windows 需 MSVC，Linux 需 libdbus/GTK/WebKitGTK（实测 `cargo check` 会在 `libdbus-sys` 处 panic）
-- **全局快捷键目前只有 macOS 实现**：`keyboard_hook.rs` 的 CGEventTap 写死了 `KeyMapping::Mac` 与 CoreGraphics `FLAG_COMMAND`，Windows 是 `VK_*` + `GetAsyncKeyState`，Wayland 则根本禁止全局按键捕获。非 macOS 下 `ensure_listener` 提前返回，**划词/快捷键不可用**，CI 只保证能编译
+- **全局快捷键目前只有 macOS 实现**：`keyboard_hook.rs` 的 CGEventTap 写死了 `KeyMapping::Mac` 与 CoreGraphics `FLAG_COMMAND`，Windows 是 `VK_*` + `GetAsyncKeyState`，Wayland 则根本禁止全局按键捕获。非 macOS 走 `keyboard_hook_unsupported.rs` 占位模块（同名 API、`supported=false`、不建 tap），**划词/快捷键不可用**，CI 只保证能编译
 - `HookStatusSnapshot.supported`（= `HOOK_SUPPORTED`）用来区分「本平台不支持」与「用户没授权」—— 前端据此隐藏「输入监控」横幅（那是 macOS 独有门禁）。**不要用 `listening` 推断**，非 macOS 的 stub 同样上报 false
 - `moss-tts-nano`/`ort-sys` 已限定为仅 macOS 非 x86_64（无 Win/Linux 预编译库）
 
