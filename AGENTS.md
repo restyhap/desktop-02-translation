@@ -17,6 +17,7 @@ Tauri 2 + React 19 桌面划词翻译应用（macOS + Windows 划词；macOS aar
 |---|---|
 | `.opencode/agents/项目结构.md` | 首次全局探索、代码地图、设置/窗口/词典/前端改动 |
 | `.opencode/agents/自启动与快捷键.md` | 全局快捷键、事件 tap、WH_KEYBOARD_LL、输入监控授权、开机自启动 |
+| `.opencode/agents/Windows划词实机验证清单.md` | 要在 Windows 上验证划词 / 排查「Ctrl+C+C 没反应」 |
 | `.opencode/agents/文件同步.md` | 发布、版本号、tag→CI、Release、GitHub/Gitee、安装包打包 |
 | `.opencode/agents/语音与构建差异.md` | 跨平台构建、Intel/moss-tts、ort-sys |
 
