@@ -81,7 +81,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "RWRXWhf6ONX3KmfuV4IDhnm7EbWTzdVMDIk9XQtvvZAjiq7kXLTc09nY",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBRjdENTM4RkExNzVBNTcKUldSWFdoZjZPTlgzS21mdVY0SURobm03RWJXVHpkVk1ESWs5WFF0dnZaQWppcTdrWExUYzA5blkK",
       "endpoints": [
         "https://gitee.com/restyhap/desktop-02-translation/raw/main/latest.json",
         "https://raw.githubusercontent.com/restyhap/desktop-02-translation/main/latest.json"
