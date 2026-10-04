@@ -11,9 +11,17 @@ pub struct ShortcutConfig {
 
 impl Default for ShortcutConfig {
     fn default() -> Self {
+        // Windows 上默认用 Ctrl 而不是 ⌘：`⌘` 在 Windows 就是 Win 键，而 `Win+C` /
+        // `Win+V` 与系统内建的「小组面板 / 剪贴板历史」冲突，划词窗口会跟系统面板打架。
+        // 用户仍可在设置里手动改成 Meta（对应 Win 键）—— 只要他不撞系统快捷键。
+        #[cfg(target_os = "windows")]
+        let (translate, show_main) = ("Ctrl+C+C", "Ctrl+C+V");
+        #[cfg(not(target_os = "windows"))]
+        let (translate, show_main) = ("⌘+C+C", "⌘+C+V");
+
         Self {
-            translate: "⌘+C+C".into(),
-            show_main: "⌘+C+V".into(),
+            translate: translate.into(),
+            show_main: show_main.into(),
         }
     }
 }

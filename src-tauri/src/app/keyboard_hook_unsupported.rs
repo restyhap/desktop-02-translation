@@ -1,95 +1,63 @@
-//! 非 macOS 的全局快捷键占位模块（由 `app/mod.rs` 按平台路由到这里）。
+//! 无全局监听实现的平台层（由 `app/mod.rs` 路由到这里；当前只有 Linux/Wayland）。
 //!
-//! 真正的实现在 `keyboard_hook.rs`：CGEventTap / IOKit 授权判定都是 macOS 专有 API，
-//! 那里**只在 macOS 编译**，因此不需要在文件里到处打 `cfg` 门控——历史上正是因为
-//! 漏打一处门控，Windows/Linux 的 `clippy -D warnings` 一直挂在 dead_code 上。
+//! 为什么不直接把 Linux 也路由到 macOS/Windows 那种实现：
+//! - **Wayland 根本禁止全局按键捕获**（`wl_keyboard` 只对本窗口生效），没有等价 API；
+//! - X11 理论上可以用 XRecord 扩展做，但那是新的一套 FFI + 授权面，暂不在范围内。
 //!
-//! 本模块提供**同名同签名**的公开 API，语义一律是「本平台不支持」：
-//! - `HookStatusSnapshot.supported = false` —— 前端据此隐藏「输入监控」横幅，
-//!   而不是误报「用户没授权」（那是 macOS 独有的门禁）；
-//! - `start_keyboard_hook` / `reload_hook_rules` 不建 tap、不消费规则，但**照常读写
-//!   managed state**，保持与 macOS 版一致的 state 契约（诊断面板拿到的是真状态，
-//!   而不是绕过 state 的常量）；
-//! - `open_listen_event_settings()` 恒为 false（非 macOS 没有这个设置面板）。
+//! 本文件因此只做两件事：
+//! 1. `install_raw_sink` 返回 `false`，让核心不启动消费线程；
+//! 2. 把核心的状态类型原样 re-export —— 上层（lib.rs / commands）不需要平台分支。
+//!
+//! **`Rule` 等类型直接用核心里的真实定义**（不是空占位 struct），这样三个平台层对
+//! `HookRules` 的类型完全一致，切换平台不会出现「类型不匹配」的编译错误。
+//!
+//! UI 侧提示是**必须**的（项目红线：静默失败必须有可见提示）：本平台 `supported=false`，
+//! 主页的 `ShortcutPermBanner` 据此显示「本平台暂不支持」，而不是静默地让快捷键无反应。
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-
-use serde::Serialize;
+use std::sync::mpsc::Sender;
 use tauri::Manager;
 
-/// 规则表条目占位。非 macOS 没有 tap 事件要匹配，仅用于撑起 `HookRules` 的类型。
-pub struct Rule;
+use super::hook_core::{
+    KeyEntry, KeyLookup, RawInput, hook_status as core_hook_status, reload_rules as core_reload_rules,
+    start_hook as core_start_hook,
+};
 
-/// managed state：规则表。与 macOS 版同名，字段保持 `pub` 以便 `lib.rs` 无差别注册。
-pub struct HookRules(pub Arc<RwLock<HashMap<String, Rule>>>);
+// 核心的状态类型与常量，本平台没有覆盖语义差异，直接 re-export
+pub use super::hook_core::{
+    HookRules, HookStarted, HookStatus, HookStatusInner, HookStatusSnapshot,
+};
 
-/// managed state：诊断快照数据源。
-pub struct HookStatus(pub Arc<HookStatusInner>);
-
-/// 诊断量。非 macOS 永远是 0/false。
-pub struct HookStatusInner {
-    pub listening: AtomicBool,
-    pub listen_event: AtomicBool,
-    pub key_events: AtomicU64,
+/// 平台层入口：本平台无实现，恒返回 false → 核心不启动消费线程。
+///
+/// 拿不到键位查表函数（本平台没有原生事件），参数一律 `_` 丢弃。
+pub fn install_raw_sink(_app: &tauri::AppHandle, _tx: Sender<RawInput>) -> bool {
+    false
 }
 
-/// managed state：监听启动幂等标记。占位实现不启动任何监听。
-pub struct HookStarted(pub AtomicBool);
-
-/// 传给前端的诊断快照，字段与 macOS 版一一对应。
-#[derive(Serialize, Clone, Copy)]
-pub struct HookStatusSnapshot {
-    /// 本平台是否实现了全局监听。占位模块恒为 false。
-    pub supported: bool,
-    pub listening: bool,
-    pub listen_event: bool,
-    pub key_events: u64,
+/// 本平台的「键码查表」占位：没有任何原生事件会到这里来。
+///
+/// 仍然要提供，是为了保持三个平台层 `start_keyboard_hook(app)` 的**签名完全一致**
+/// —— 查表函数是平台私有的，不该从上层传进来。
+fn key_entry(_code: u32) -> Option<KeyEntry> {
+    None
 }
 
-/// 本平台是否实现了全局监听（与 macOS 版同名常量，便于上层按语义引用）。
-pub const HOOK_SUPPORTED: bool = false;
-
-/// 与 macOS 版同签名。照常读 managed state，但 `supported` 恒为 false。
+/// 读取当前诊断状态（供 UI 展示「为什么没反应」）
 pub fn hook_status(app: &tauri::AppHandle) -> HookStatusSnapshot {
-    let Some(status) = app.try_state::<HookStatus>() else {
-        return HookStatusSnapshot {
-            supported: HOOK_SUPPORTED,
-            listening: false,
-            listen_event: false,
-            key_events: 0,
-        };
-    };
-    let inner = &status.0;
-    HookStatusSnapshot {
-        supported: HOOK_SUPPORTED,
-        listening: inner.listening.load(Ordering::Relaxed),
-        listen_event: inner.listen_event.load(Ordering::Relaxed),
-        key_events: inner.key_events.load(Ordering::Relaxed),
-    }
+    core_hook_status(app)
 }
 
-/// 与 macOS 版同签名。沿用同样的幂等标记，但不建 tap。
+/// 启动监听（幂等）。本平台只建规则表、不起消费线程（`install_raw_sink` 返 false）。
 pub fn start_keyboard_hook(app: &tauri::AppHandle) {
-    if app.state::<HookStarted>().0.swap(true, Ordering::SeqCst) {
-        return;
-    }
-    eprintln!("[hook] 当前平台尚无全局监听实现（目前仅 macOS），跳过");
+    core_start_hook(app, key_entry as KeyLookup);
 }
 
-/// 与 macOS 版同签名。没有 tap 消费规则，但设置变更后同样清空旧规则表。
+/// 设置变更后热更新规则（无监听可重载，仅替换规则表）
 pub fn reload_hook_rules(app: &tauri::AppHandle) {
-    if let Some(rules) = app.try_state::<HookRules>() {
-        rules
-            .0
-            .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .clear();
-    }
+    core_reload_rules(app, key_entry as KeyLookup);
 }
 
-/// 与 macOS 版同签名。非 macOS 没有「输入监控」这个门禁，无需打开设置面板。
+/// 本平台没有「输入监控」这类可授予的授权门禁，也没有对应系统设置面板。
 pub fn open_listen_event_settings() -> bool {
     false
 }
