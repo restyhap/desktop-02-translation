@@ -48,9 +48,13 @@ use crate::app::config::{extract_keys_from_shortcut, ShortcutConfig};
 /// 连击序列的两次按键最大间隔
 const SEQ_WINDOW: Duration = Duration::from_millis(500);
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// tap 失效后的重建间隔（授权由用户手动给，需要留出授权生效的时间）
 const RELISTEN_RETRY: Duration = Duration::from_secs(5);
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// 健康检查间隔：轮询授权状态、确认 tap 还活着
 const HEALTH_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -95,15 +99,27 @@ fn modifiers_from_flags(flags: u64) -> u8 {
 
 // ==================== 事件类型与 tap 参数 ====================
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// `CGEventType` 取值（`CGEventTypes.h`，与 `IOLLEvent.h` 的 `NX_*` 同值）
 const EVENT_KEY_DOWN: u32 = 10;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 const EVENT_KEY_UP: u32 = 11;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 const EVENT_FLAGS_CHANGED: u32 = 12;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// 回调处理超时被系统禁用
 const EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// 用户主动禁用
 const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// 只申请这三类事件。mask 位 = `1 << type`。
 ///
 /// 刻意**不用** `kCGEventMaskForAllEvents`：未获「输入监控」授权时，系统只清掉不被
@@ -117,14 +133,22 @@ const EVENT_TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 const EVENT_MASK: u64 =
     (1u64 << EVENT_KEY_DOWN) | (1u64 << EVENT_KEY_UP) | (1u64 << EVENT_FLAGS_CHANGED);
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// `kCGHIDEventTap`：优先拿到 HID 层事件，键盘类事件的键码最完整
 const TAP_LOCATION_HID: u32 = 0;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// `kCGHeadInsertEventTap`
 const TAP_PLACE_HEAD_INSERT: u32 = 0;
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// `kCGEventTapOptionListenOnly`：**只监听不拦截**，对应 TCC 门禁是
 /// `kTCCServiceListenEvent`（「输入监控」），不需要「辅助功能」。
 const TAP_OPTION_LISTEN_ONLY: u32 = 1;
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// `kCGKeyboardEventKeycode`：`CGEventGetIntegerValueField` 的字段号，取虚拟键码
 const FIELD_KEYCODE: u32 = 9;
 
@@ -425,8 +449,12 @@ struct TapHandles {
     source: usize,
 }
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 static TAP_SLOT: Mutex<Option<TapHandles>> = Mutex::new(None);
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 /// 只在「问题出现」和「恢复」两个时刻打日志，避免未授权时每 5s 刷一行。
 static TAP_WARNED: AtomicBool = AtomicBool::new(false);
 
@@ -759,12 +787,16 @@ fn current_tap() -> Option<TapHandles> {
         })
 }
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 fn log_tap_problem(message: &str) {
     if !TAP_WARNED.swap(true, Ordering::Relaxed) {
         eprintln!("{message}");
     }
 }
 
+#[cfg(target_os = "macos")]
+// macOS 事件 tap 内部件：非 macOS 无调用点，需门控否则 clippy 报 dead_code
 fn log_tap_recovered() {
     if TAP_WARNED.swap(false, Ordering::Relaxed) {
         eprintln!("[hook] 事件 tap 已挂到主线程 run loop");

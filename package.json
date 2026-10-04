@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:dictbuild": "cd src-tauri && cargo build --release --bin dictbuild && mkdir -p binaries && cp target/release/dictbuild binaries/dictbuild",
+    "build:dictbuild": "cd src-tauri && cargo build --release --bin dictbuild && node -e \"const fs=require('fs'),p=require('path');const exe=process.platform==='win32'?'.exe':'';fs.mkdirSync('binaries',{recursive:true});fs.copyFileSync(p.join('target','release','dictbuild'+exe),p.join('binaries','dictbuild'+exe));\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:rust": "cd src-tauri && cargo test",
