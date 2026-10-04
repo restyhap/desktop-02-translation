@@ -13,12 +13,18 @@ function formatKeyEvents(n: number): string {
 }
 
 /**
- * 主页顶部的「输入监控未授权」故障横幅。
+ * 主页顶部的划词快捷键状态横幅。
  *
  * 为什么放主页而不是设置页：未授权时**全局快捷键完全无反应**，用户往往是在主页
  * 划词、按 ⌘+C 却毫无动静时才发现出问题的。设置页是「主动去配置」才会看到的地方，
  * 把故障提示放在那里等于静默失败（本项目明确禁止）。这里同时给出两个出口：
  * 跳系统设置（解决授权）与跳设置页（改快捷键本身）。
+ *
+ * 三种呈现：
+ * - `supported === false`（当前只有 Linux）：不是故障，是能力缺失，给中性说明
+ *   横幅，否则用户按下快捷键毫无反应却毫无线索。
+ * - 授权/监听故障：黄色警告横幅 + 两个出口。
+ * - 一切正常：不渲染。
  *
  * 判定式 `!listening || (listen_event !== true && key_events === 0)`：
  * - `listen_event` 由后端 `IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)` 给出，
@@ -48,9 +54,28 @@ export function ShortcutPermBanner({ onGoToSettings }: { onGoToSettings: () => v
 
   if (status === null) return null;
 
-  // 本平台压根没实现全局监听时直接隐藏：「输入监控」是 macOS 独有的 TCC 门禁，
-  // 在 Windows/Linux 上既没有可授予的权限，也没有可跳转的系统设置面板。
-  if (!status.supported) return null;
+  // 本平台压根没实现全局监听（当前只有 Linux）：不能像以前那样静默返回 null ——
+  // 用户照样看得到「⌘+C+C 划词」和可录制的快捷键，按了没反应就是静默失败。
+  // 「输入监控」是 macOS 独有的 TCC 门禁，这里没有可授予的权限，也没有可跳转的
+  // 系统设置面板，所以只给说明 + 去设置页的口子，不给授权按钮。
+  if (!status.supported) {
+    return (
+      <div className="mt-5 flex items-start gap-3 rounded-card border border-line bg-accent-soft px-4 py-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm leading-6 text-ink">{t("app.shortcutUnsupported")}</div>
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <button
+              type="button"
+              onClick={onGoToSettings}
+              className="cursor-pointer text-xs font-medium text-ink-2 underline-offset-2 hover:text-accent hover:underline"
+            >
+              {t("app.shortcutPermSettingsBtn")}
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const broken = !status.listening || (status.listen_event !== true && status.key_events === 0);
   if (!broken) return null;

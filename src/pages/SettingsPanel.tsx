@@ -73,6 +73,7 @@ import {
   deleteApiKey,
   deleteEngine,
   getDictPaths,
+  getHookStatus,
   saveDictPaths,
   updateShortcuts,
   getShortcuts,
@@ -1344,11 +1345,16 @@ function AddKeyModal({
  * 这里只负责「改配置」。未获得 macOS「输入监控」授权时全局快捷键必然无反应，
  * 那属于**故障**而非配置，已由主页的 `ShortcutPermBanner` 承担提示与跳转
  * （用户往往是在主页划词却毫无动静时才察觉问题，把提示埋在设置页等于静默失败）。
+ *
+ * 但「本平台压根没实现全局监听」（`HookStatus.supported === false`，当前只有
+ * Linux）是**能力缺失**，用户恰恰是来这个分节找答案的，所以在页内也留一句说明，
+ * 否则录了一堆快捷键却永远不生效。
  */
 function ShortcutRows() {
   const { t } = useAppLocale();
   const [shortcuts, setShortcuts] = useState<ShortcutConfig>({ translate: "", show_main: "" });
   const [loaded, setLoaded] = useState(false);
+  const [hookSupported, setHookSupported] = useState<boolean | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1362,6 +1368,15 @@ function ShortcutRows() {
       .catch((err: unknown) => {
         console.error("[Settings] 加载快捷键失败:", err);
         if (alive) setLoaded(true);
+      });
+    // 平台能力只读一次：设置面板的生命周期内不会变，没必要轮询
+    getHookStatus()
+      .then((status) => {
+        if (alive) setHookSupported(status.supported);
+      })
+      .catch((err: unknown) => {
+        console.error("[Settings] 读取监听能力失败:", err);
+        if (alive) setHookSupported(null);
       });
     return () => {
       alive = false;
@@ -1378,6 +1393,11 @@ function ShortcutRows() {
 
   return (
     <div>
+      {hookSupported === false ? (
+        <p className="mb-3 rounded-md bg-accent-soft px-3 py-2 text-xs leading-5 text-ink-2">
+          {t("settings.shortcutUnsupported")}
+        </p>
+      ) : null}
       <Row title={t("settings.shortcutTranslate")} hint={t("settings.shortcutTranslateHint")}>
         <ShortcutRecorder
           value={shortcuts.translate}
