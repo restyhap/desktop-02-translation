@@ -162,6 +162,12 @@ pub struct HookStarted(pub AtomicBool);
 /// 传给前端的状态快照
 #[derive(Serialize, Clone, Copy)]
 pub struct HookStatusSnapshot {
+    /// 本平台是否实现了全局监听。非 macOS 当前恒为 false（见模块文档）。
+    ///
+    /// 必须单独一个字段而不能靠 `listening` 推断：非 macOS 的 stub 同样上报
+    /// `listening=false`，但那代表「本平台不支持」而不是「用户没授权」——
+    /// 前端拿它去弹「输入监控未授权」横幅会在 Windows/Linux 上无意义地报错。
+    pub supported: bool,
     /// 事件 tap 是否已就绪
     pub listening: bool,
     /// 是否已获得「输入监控」授权（未授权时系统不投递按键，快捷键必然无反应）
@@ -169,6 +175,9 @@ pub struct HookStatusSnapshot {
     /// 已接收的按键事件数
     pub key_events: u64,
 }
+
+/// 本平台是否实现了全局监听。当前只有 macOS 有实现（见文件头文档）。
+pub const HOOK_SUPPORTED: bool = cfg!(target_os = "macos");
 
 /// tap 回调 → 消费线程的原始输入。只带够匹配用的最小信息，回调里不做任何解析。
 enum RawInput {
@@ -188,6 +197,7 @@ struct HookEvent {
 pub fn hook_status(app: &tauri::AppHandle) -> HookStatusSnapshot {
     let Some(status) = app.try_state::<HookStatus>() else {
         return HookStatusSnapshot {
+            supported: HOOK_SUPPORTED,
             listening: false,
             listen_event: false,
             key_events: 0,
@@ -195,6 +205,7 @@ pub fn hook_status(app: &tauri::AppHandle) -> HookStatusSnapshot {
     };
     let inner = &status.0;
     HookStatusSnapshot {
+        supported: HOOK_SUPPORTED,
         listening: inner.listening.load(Ordering::Relaxed),
         listen_event: inner.listen_event.load(Ordering::Relaxed),
         key_events: inner.key_events.load(Ordering::Relaxed),
@@ -429,6 +440,13 @@ fn ensure_listener(app: &tauri::AppHandle) {
         "事件 tap 必须挂在主线程 run loop 上，ensure_listener 只能在 setup 阶段首次调用"
     );
 
+    // 非 macOS 暂未实现全局监听（见文件头文档）：不建 tap、不起消费线程、不跑健康检查。
+    // 上报 listening=false 且 supported=false，前端据此不弹「输入监控」横幅。
+    if !HOOK_SUPPORTED {
+        eprintln!("[hook] 当前平台尚无全局监听实现（目前仅 macOS），跳过");
+        return;
+    }
+
     let (tx, rx) = mpsc::channel::<RawInput>();
     let _ = TAP_CTX.set(TapContext {
         tx: Mutex::new(tx),
@@ -443,14 +461,23 @@ fn ensure_listener(app: &tauri::AppHandle) {
 
     // 当前就在主线程，且事件循环尚未启动 —— 此时挂 source 最稳妥，
     // 之后由 tao/Cocoa 主循环顺带驱动。
+    // install_tap / health_loop 都是 macOS-only 符号；ensure_listener 已在上面
+    // 于非 macOS 提前 return，但 Rust 仍会编译后续代码，故调用点一并门控。
+    #[cfg(target_os = "macos")]
     install_tap(&status);
 
-    let health_app = app.clone();
-    thread::spawn(move || health_loop(health_app, status));
+    #[cfg(target_os = "macos")]
+    {
+        let health_app = app.clone();
+        thread::spawn(move || health_loop(health_app, status));
+    }
 }
 
 /// 健康检查线程：轮询授权状态；tap 不存在或被系统禁用时回主线程重建。
 /// 用户在系统设置里授权后无需重启应用即可恢复。
+///
+/// 仅 macOS：依赖 install_tap / tap_enabled / listen_event_access 三个 macOS-only 符号。
+#[cfg(target_os = "macos")]
 fn health_loop(app: tauri::AppHandle, status: Arc<HookStatusInner>) {
     loop {
         thread::sleep(HEALTH_INTERVAL);

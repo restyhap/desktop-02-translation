@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use sqlite::Connection;
 use walkdir::WalkDir;
@@ -173,11 +173,12 @@ fn word_lower(word: &str) -> String {
 }
 
 fn decompress_dsl_dz(path: &Path) -> Result<String, String> {
-    let mut child = std::process::Command::new("gzip").args(["-dc", &path.to_string_lossy()]).stdout(std::process::Stdio::piped()).spawn().map_err(|e| format!("gzip 启动失败: {}", e))?;
-    let stdout = child.stdout.take().ok_or("无法获取 stdout")?;
-    let reader = BufReader::new(stdout);
+    // 进程内用 flate2 解 gzip，不再 shell out 到 `gzip -dc`。
+    // 原因：Windows 上没有 gzip，shell out 会直接失败；flate2 本就是现有依赖。
+    let file = fs::File::open(path).map_err(|e| format!("打开 {} 失败: {}", path.display(), e))?;
+    let mut decoder = flate2::read::GzDecoder::new(file);
     let mut bytes: Vec<u8> = Vec::new();
-    let _ = std::io::Read::take(reader, u64::MAX).read_to_end(&mut bytes).map_err(|e| e.to_string())?;     child.wait().map_err(|e| e.to_string())?;
+    decoder.read_to_end(&mut bytes).map_err(|e| format!("解压 {} 失败: {}", path.display(), e))?;
     let utf16: Vec<u16> = if bytes.starts_with(&[0xff, 0xfe]) { bytes[2..].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() } else { bytes.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect() };
     let mut text = String::from_utf16_lossy(&utf16);
     if text.starts_with("\u{feff}") { text = text[3..].to_string(); }
@@ -306,6 +307,38 @@ fn find_file(dir: &Path, pred: impl Fn(&Path) -> bool) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// gzip 解压回归测试。
+    ///
+    /// 这段原先是 `gzip -dc`（系统命令，Windows 上不存在）。重点验证两条 UTF-16
+    /// 分支：BOM (0xFFFE) 与无 BOM，都要正确解出文本。
+    fn write_gz(path: &Path, raw: &[u8]) {
+        let mut e = flate2::write::GzEncoder::new(fs::File::create(path).unwrap(), flate2::Compression::default());
+        use std::io::Write as _;
+        e.write_all(raw).unwrap();
+        e.finish().unwrap();
+    }
+
+    fn utf16le(s: &str, bom: bool) -> Vec<u8> {
+        let mut v: Vec<u8> = Vec::new();
+        if bom { v.extend_from_slice(&[0xff, 0xfe]); }
+        for u in s.encode_utf16() { v.extend_from_slice(&u.to_le_bytes()); }
+        v
+    }
+
+    #[test]
+    fn decompress_dsl_dz_handles_bom_and_bomless_utf16() {
+        let dir = std::env::temp_dir().join("dictbuild_gz_test");
+        fs::create_dir_all(&dir).unwrap();
+        let text = "#INDEX_LANGUAGE\nword = 鸟";
+
+        for (name, bom) in [("bom.dz", true), ("nobom.dz", false)] {
+            let p = dir.join(name);
+            write_gz(&p, &utf16le(text, bom));
+            let got = decompress_dsl_dz(&p).expect("解压应成功");
+            assert_eq!(got, text, "{name} 解压文本不符");
+        }
+    }
 
     #[test]
     fn expand_tags_keeps_bold_italic_and_strips_color_margin() {

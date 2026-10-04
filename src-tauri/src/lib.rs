@@ -50,6 +50,14 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())
+        // 应用内更新：updater 只提供能力，实际的「查版本 / 下载 / 安装」由前端
+        // @tauri-apps/plugin-updater 驱动（进度回调直接落在 UI 上，无需再过一层 emit）。
+        // process 提供 relaunch()：macOS 装完 .app 后必须重启进程才会切到新二进制。
+        // 两者都只在桌面端有意义，与 tauri 一致挂在 desktop target 的依赖块下。
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        // 平台判定：输入监控横幅与更新后重授权提示都只在 macOS 出现
+        .plugin(tauri_plugin_os::init())
         // 开机自启动：macOS 用 LaunchAgent 注册登录项；--hidden 让自启时静默后台运行
         .plugin(
             tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, vec!["--hidden"].into()),

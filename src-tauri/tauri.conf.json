@@ -64,7 +64,10 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["binaries"],
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "binaries"
+    ],
     "macOS": {
       "signingIdentity": "-"
     },
@@ -75,5 +78,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "RWRXWhf6ONX3KmfuV4IDhnm7EbWTzdVMDIk9XQtvvZAjiq7kXLTc09nY",
+      "endpoints": [
+        "https://gitee.com/restyhap/desktop-02-translation/raw/main/latest.json",
+        "https://raw.githubusercontent.com/restyhap/desktop-02-translation/main/latest.json"
+      ]
+    }
   }
 }

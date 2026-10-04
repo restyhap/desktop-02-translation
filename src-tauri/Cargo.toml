@@ -30,17 +30,31 @@ serde_json = "1"
 keycode = "1"
 sqlite = "0.37"
 flate2 = "1"
+# 进程内读词典资源 zip：原先 shell out 到系统 unzip，而 Windows 没有 unzip。
+# zip 4.x 本就已作为传递依赖存在于 lock 文件（tauri 依赖链带入），提为直接依赖不引入新编译单元。
+zip = "4"
 walkdir = "2"
 # moss-tts-nano 仅在非 intel-mac 平台编译：ort-sys 无 x86_64-macos 预编译库；
 # MOSS-TTS 已下线且设置页分节已注释，Intel 版走系统语音即可
 # moss-tts-nano = "0.1.1"
 futures-util = "0.3"
 
-[target.'cfg(not(all(target_os = "macos", target_arch = "x86_64")))'.dependencies]
+# moss-tts-nano / ort-sys 目前**只有 macOS 可用**：ort-sys 缺 x86_64-macos 预编译库
+# （这是它被排除出 Intel 构建的原因），同样也没有 Windows/Linux 预编译包。
+# CI 打通 Win/Linux 构建期间这里限定为仅 macOS，否则 ort-sys 会直接构建失败。
+# 将来要恢复非 macOS 语音合成，需先确认 ort-sys 为对应平台提供了预编译库。
+[target.'cfg(all(target_os = "macos", not(target_arch = "x86_64")))'.dependencies]
 moss-tts-nano = "0.1.1"
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.5.0"
+# 应用内更新：updater 负责「查版本 + 下载 + 校验 minisign 签名 + 替换 .app」，
+# process 提供 relaunch()（更新装完后重启自己）。两者都是纯桌面能力，故与
+# window-state 一起挂在 desktop target 块下。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# 跨平台构建期需要区分「是否 macOS」：输入监控横幅与更新后重授权提示都只在 macOS 出现
+tauri-plugin-os = "2"
 reqwest = { version = "0.11", features = ["json", "stream"] }
 tokio = { version = "1", features = ["full"] }
 md-5 = "0.10"

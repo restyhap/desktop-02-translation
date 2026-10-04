@@ -469,6 +469,13 @@ async fn download_file(
     // resolve-cache 免限流直链：小文件直接 200；大文件 302 到 CDN 且支持 Range 续传
     let url = format!("{MIRROR_BASE}/api/resolve-cache/models/{repo}/{sha}/{name}");
     let dest = dir.join(name);
+    // 已完整则直接返回，不要发请求。
+    // 否则 resume 会等于 expected，发出的 `Range: bytes=<expected>-` 超出文件末尾，
+    // 服务端一律回 416，而 416 不在下面 200/206 的白名单里 → 退避重试 10 次后报错。
+    // （正是 probe_resolve_cache_download 验证的幂等性，也是本函数名字里 Idempotent 的由来）
+    if expected > 0 && file_ok(&dest, expected) {
+        return Ok(());
+    }
     let mut attempt = 0;
     loop {
         attempt += 1;

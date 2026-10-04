@@ -36,6 +36,7 @@ import {
   type TtsVoiceInfo,
 } from "@/storage";
 import { playPreview, stopPreview, type PreviewEngine } from "@/lib/ttsPreview";
+import { useUpdater, checkForUpdate, getUpdaterState } from "@/lib/updater";
 
 const SECTIONS = [
   { id: "general", tKey: "settings.sectionGeneral" },
@@ -551,6 +552,24 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
   };
 
   /**
+   * 手动检查更新。结果不靠 toast 传达 —— 有新版本时主页横幅会自动冒头，
+   * 这里只用 toast 回应「已是最新版」与「检查失败」两种无 UI 状态的情况。
+   */
+  const updater = useUpdater();
+  const currentVersion = updater.currentVersion;
+  const handleCheckUpdate = async () => {
+    await checkForUpdate({ silent: false });
+    const s = getUpdaterState();
+    if (s.phase === "error") {
+      showToast(t("settings.checkUpdateFailed"), "error");
+    } else if (s.availableVersion) {
+      showToast(t("settings.checkUpdateFound", { version: s.availableVersion }), "info");
+    } else {
+      showToast(t("settings.checkUpdateUpToDate"), "success");
+    }
+  };
+
+  /**
    * 改历史保存时效：先落设置（App.onChange 内部 saveSettings），再立即清理一次。
    * 启动时 Rust 也会清理一次，这里是为了改设置后立刻见效并给出删除条数反馈。
    */
@@ -699,6 +718,20 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
               ))}
               <option value={0}>{t("settings.historyRetentionForever")}</option>
             </Select>
+          </Row>
+        {/* 应用更新：手动检查入口。横幅在主页负责发现与下载，这里负责「主动查一次」 */}
+          <Row title={t("settings.checkUpdate")} hint={t("settings.checkUpdateHint")}>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-ink-3">v{currentVersion || "—"}</span>
+              <button
+                type="button"
+                onClick={handleCheckUpdate}
+                disabled={updater.phase === "checking" || updater.phase === "downloading"}
+                className="h-8 cursor-pointer rounded-md px-2.5 text-xs text-ink-2 transition-colors hover:bg-hover hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {updater.phase === "checking" ? t("settings.checkingUpdate") : t("settings.checkUpdateBtn")}
+              </button>
+            </div>
           </Row>
         </Section>
 

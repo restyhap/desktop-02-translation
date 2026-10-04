@@ -236,19 +236,23 @@ impl Dictionary {
         Ok(resources)
     }
 
-    // 从资源 zip 中提取单个文件, 返回 base64 (data URL 用); 用系统 unzip, 避免新增依赖
+    // 从资源 zip 中提取单个文件, 返回 base64 (data URL 用)。
+    //
+    // 原先 shell out 到系统 `unzip -p`，而 Windows 上没有 unzip，词典发音/图片会直接失败。
+    // 改用 zip crate 进程内读取（它本已作为传递依赖存在于 lock 文件）。
     pub fn get_resource_data(zip_file: String, filename: String) -> Result<DictResourceData, String> {
         let path = std::path::PathBuf::from(&zip_file);
         if !path.exists() {
             return Err(format!("资源包不存在: {}", zip_file));
         }
-        let out = std::process::Command::new("unzip")
-            .args(["-p", &zip_file, &filename])
-            .output()
-            .map_err(|e| format!("unzip 启动失败: {}", e))?;
-        if !out.status.success() {
-            return Err(format!("从资源包提取失败: {}", filename));
-        }
+        let file = std::fs::File::open(&path).map_err(|e| format!("打开资源包失败: {}", e))?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取资源包失败: {}", e))?;
+        let mut entry = archive
+            .by_name(&filename)
+            .map_err(|e| format!("资源包内找不到 {}: {}", filename, e))?;
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buf)
+            .map_err(|e| format!("提取 {} 失败: {}", filename, e))?;
         let ext = std::path::Path::new(&filename)
             .extension()
             .map(|e| e.to_string_lossy().to_lowercase())
@@ -268,7 +272,7 @@ impl Dictionary {
             _ => "application/octet-stream",
         };
         use base64::Engine as _;
-        let data_base64 = base64::engine::general_purpose::STANDARD.encode(&out.stdout);
+        let data_base64 = base64::engine::general_purpose::STANDARD.encode(&buf);
         Ok(DictResourceData {
             mime: mime.to_string(),
             data_base64,
@@ -298,15 +302,23 @@ impl Dictionary {
     // dictbuild 位置: dev 时由 cargo 产出在 target/<profile>/, 生产时随 bundle.resources
     // 落到 Contents/Resources/binaries/ (macOS)。resource_dir() 在 dev 返回 target 目录、生产返回
     // 平台资源目录, 因此优先用它, 再兜底 exe 同级。
+    //
+    // Windows 可执行文件带 `.exe` 后缀（cargo 产出的是 dictbuild.exe），
+    // 原先硬编码 "dictbuild" 在 Windows 上永远找不到 —— 两个后缀都试。
     fn find_dictbuild(app: &tauri::AppHandle) -> Option<PathBuf> {
+        let names = ["dictbuild", "dictbuild.exe"];
         let mut candidates: Vec<PathBuf> = Vec::new();
         if let Ok(dir) = app.path().resource_dir() {
-            candidates.push(dir.join("binaries").join("dictbuild"));
-            candidates.push(dir.join("dictbuild"));
+            for name in names {
+                candidates.push(dir.join("binaries").join(name));
+                candidates.push(dir.join(name));
+            }
         }
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
-                candidates.push(parent.join("dictbuild"));
+                for name in names {
+                    candidates.push(parent.join(name));
+                }
             }
         }
         candidates.into_iter().find(|p| p.exists())
@@ -360,5 +372,65 @@ impl Dictionary {
             Ok(sqlite::State::Row) => Ok(stmt.read::<i64, _>(0).unwrap_or(0)),
             _ => Ok(0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Dictionary;
+    use base64::Engine as _;
+    use std::io::Write;
+
+    /// zip 提取回归测试。
+    ///
+    /// 这段逻辑原先是 `unzip -p`（系统命令，Windows 上不存在）。这里验证改用
+    /// zip crate 后：字节**逐字节一致**、base64 正确、mime 推断不变、条目缺失时
+    /// 报错而不是返回空数据。
+    #[test]
+    fn get_resource_data_extracts_exact_bytes_and_mime() {
+        let payload: Vec<u8> = (0u8..=255).cycle().take(5000).collect();
+        let dir = std::env::temp_dir().join("dict_zip_test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("res.zip");
+
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            let opts: zip::write::FileOptions<()> =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            w.start_file("sound/pron.mp3", opts).unwrap();
+            w.write_all(&payload).unwrap();
+            w.finish().unwrap();
+        }
+
+        let got = Dictionary::get_resource_data(
+            zip_path.to_string_lossy().to_string(),
+            "sound/pron.mp3".to_string(),
+        )
+        .expect("提取应成功");
+
+        assert_eq!(got.mime, "audio/mpeg", "mp3 的 mime 推断不应改变");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&got.data_base64)
+            .expect("base64 应可解码");
+        assert_eq!(decoded, payload, "解压字节应与写入的完全一致");
+    }
+
+    #[test]
+    fn get_resource_data_errors_on_missing_entry() {
+        let dir = std::env::temp_dir().join("dict_zip_test_missing");
+        std::fs::create_dir_all(&dir).unwrap();
+        let zip_path = dir.join("res.zip");
+        {
+            let mut w = zip::ZipWriter::new(std::fs::File::create(&zip_path).unwrap());
+            w.start_file("a.png", zip::write::FileOptions::<()>::default()).unwrap();
+            w.write_all(b"x").unwrap();
+            w.finish().unwrap();
+        }
+        let err = Dictionary::get_resource_data(
+            zip_path.to_string_lossy().to_string(),
+            "not-there.png".to_string(),
+        )
+        .expect_err("缺失条目必须报错");
+        assert!(err.contains("找不到"), "错误信息应指明找不到条目，实际: {err}");
     }
 }

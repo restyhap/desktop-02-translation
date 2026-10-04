@@ -41,6 +41,25 @@ bash release.sh
 4. **静默失败必须有 UI 侧可见提示**：本应用用户看不到后台日志，`eprintln!` 不是交付物
 5. **要发布才** `git tag v<ver>` + `bash release.sh`（凭据在 `~/.config/release-tokens/`，勿提交仓库）
 
+## 应用内更新（v0.1.6 起）
+
+- 已接入 `tauri-plugin-updater` + `tauri-plugin-process`；前端状态机在 `src/lib/updater.ts`（模块级 store + `useSyncExternalStore`，主页 `UpdateBanner` 与设置页「通用」分区共用同一份状态），横幅在**主页**不在设置页
+- **Tauri CLI 不生成 `latest.json`**（那是 GitHub tauri-action 的活），只产出 `.app.tar.gz` + `.sig`；清单由 `release.sh` 里的内嵌 Python 拼装
+- `.sig` 文件要剥一层：`signature` 字段要的是 `base64(注释\n<minisign 签名串>)` 的**内层串**，不是整个文件、也不是路径
+- 清单必须 `darwin-aarch64` 与 `darwin-x86_64` **两份都写全** —— Tauri 先校验整份清单再比版本号，少一个 key 就不更新且无明显报错
+- **Gitee 没有 `/releases/latest/download/` 稳定别名**（实测跳 `/repository/archive/` 直接 404），GitHub 有。故清单 **commit 进仓库**，端点用两个镜像的 raw 地址（Gitee 在前，它在目标用户网络里更可达）；`release.sh` 会先 push `latest.json` 再让客户端查得到
+- `endpoints` 只在上一 个返回**非 2XX** 时才回退，网络超时不一定算非 2XX
+- **ad-hoc 签名 ⇒ 每次更新后「输入监控」授权必然失效**（DR 只落 cdhash，见下条）。前端靠 `localStorage` 比对前后版本号识别「刚更新完」，主动提示用户去系统设置把开关关掉再打开；根治要买 Developer ID 换 `signingIdentity`
+- 签名私钥在 `~/.tauri/desktop-translation.key`（**加密**，密码在 `~/.config/release-tokens/`）；丢了就无法再给已安装用户推更新。详见 `SIGNING_GUIDE.md`
+- 清单生成**只有一个实现**：仓库根的 `merge-latest-json.mjs`（校验每条 platform 的 url/signature，不合法就失败且不写文件）。`release.sh` 与 CI 共用它，不要再另写一份拼装逻辑
+
+## 跨平台构建现状（CI 已通，特性未补）
+
+- `.github/workflows/ci.yml` 在**原生 runner**（macOS ×2 / windows-latest / ubuntu-22.04）跑 `tauri build --no-bundle` + clippy + typecheck。本机交叉编译不可行：Windows 需 MSVC，Linux 需 libdbus/GTK/WebKitGTK（实测 `cargo check` 会在 `libdbus-sys` 处 panic）
+- **全局快捷键目前只有 macOS 实现**：`keyboard_hook.rs` 的 CGEventTap 写死了 `KeyMapping::Mac` 与 CoreGraphics `FLAG_COMMAND`，Windows 是 `VK_*` + `GetAsyncKeyState`，Wayland 则根本禁止全局按键捕获。非 macOS 下 `ensure_listener` 提前返回，**划词/快捷键不可用**，CI 只保证能编译
+- `HookStatusSnapshot.supported`（= `HOOK_SUPPORTED`）用来区分「本平台不支持」与「用户没授权」—— 前端据此隐藏「输入监控」横幅（那是 macOS 独有门禁）。**不要用 `listening` 推断**，非 macOS 的 stub 同样上报 false
+- `moss-tts-nano`/`ort-sys` 已限定为仅 macOS 非 x86_64（无 Win/Linux 预编译库）
+
 ## 高频事实（不读子文档也该知道的）
 
 - **全局快捷键 = 自建 ListenOnly tap，挂在主线程 run loop 上**（`src-tauri/src/app/keyboard_hook.rs`，手写 CoreGraphics/CoreFoundation FFI，**rdev 已移除**），没有 `keyboard-hook` 子进程，也没有 PING/PONG 心跳协议

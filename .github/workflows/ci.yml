@@ -1,0 +1,95 @@
+name: CI
+
+# 目的：在**原生 runner** 上验证四个目标都能编译。
+#
+# 为什么必须用 CI 而不是本机交叉编译：
+# - Windows 需要 MSVC 工具链，macOS 上无法产出可用的 .exe；
+# - Linux 需要 libdbus/GTK/WebKitGTK 等系统开发包（实测 cargo check 会在
+#   libdbus-sys 处直接 panic），这些没法在 macOS 上交叉装。
+#
+# 注意：当前**只有 macOS 有全局快捷键实现**（app/keyboard_hook.rs 的 CGEventTap）。
+# Windows/Linux 上 ensure_listener 会提前返回，划词/快捷键不可用；本 CI 只保证
+# 「能构建出产物」，不代表功能对等。见 HOOK_SUPPORTED 与 keyboard_hook.rs 文件头。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            rust-target: aarch64-apple-darwin
+          - name: macOS (Intel)
+            os: macos-latest
+            rust-target: x86_64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+          - name: Linux
+            os: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            libdbus-1-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust-target }}
+
+      # --no-bundle：CI 只验证「能编译」。打完整 bundle 交给 release 工作流，
+      # 否则每次 push 都要跑四套打包，慢且没必要。
+      - name: Build
+        run: pnpm tauri build --no-bundle --target ${{ matrix.rust-target }}
+        env:
+          # 编译期不需要签名密钥（--no-bundle 不产出 updater 制品），
+          # 但显式置空可避免 CI 日志误以为需要密钥。
+          TAURI_SIGNING_PRIVATE_KEY: ""
+
+      # Rust 质量门：与 AGENTS.md 的约定一致
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --target ${{ matrix.rust-target }} -- -D warnings
+
+      - name: Frontend typecheck
+        run: pnpm typecheck

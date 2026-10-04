@@ -29,6 +29,8 @@ import { SaveToVocabDialog } from "@/components/SaveToVocabDialog";
 import { RecentStrip } from "@/components/RecentStrip";
 import { TranslateChipsRow } from "@/components/TranslateChipsRow";
 import { ShortcutPermBanner } from "@/components/ShortcutPermBanner";
+import { UpdateBanner } from "@/components/UpdateBanner";
+import { initUpdater } from "@/lib/updater";
 import { HistoryPanel } from "@/pages/HistoryPanel";
 import { VocabularyPanel } from "@/pages/VocabularyPanel";
 import { DictionaryPanel } from "@/pages/DictionaryPanel";
@@ -99,6 +101,12 @@ function App() {
     const initWhenReady = async () => {
       try {
         await getDBStatus();
+        // IPC 已就绪（getVersion / updater check 都要走 IPC，必须等这一刻之后）
+        if (!cancelled) {
+          initUpdater().catch((err: unknown) => {
+            console.error("[App] 更新检查初始化失败:", err);
+          });
+        }
         if (!cancelled) {
           initDB().catch((err) => {
             console.error("[App] 数据库初始化失败:", err);
@@ -423,6 +431,9 @@ function App() {
                 {/* 授权故障横幅：未获「输入监控」时全局快捷键完全无反应，
                     提示必须放在主页（用户真正卡住的地方），设置页只负责改配置 */}
                 <ShortcutPermBanner onGoToSettings={() => setSidebarTab("settings")} />
+
+                {/* 更新横幅：新版本可下载 / 下载进度 / 刚更新完需重新授权输入监控 */}
+                <UpdateBanner />
 
                 {/* 一体化翻译卡（与页头留一档间距，对齐历史页节奏） */}
                 <div className="mt-5">

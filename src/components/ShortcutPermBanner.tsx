@@ -48,6 +48,10 @@ export function ShortcutPermBanner({ onGoToSettings }: { onGoToSettings: () => v
 
   if (status === null) return null;
 
+  // 本平台压根没实现全局监听时直接隐藏：「输入监控」是 macOS 独有的 TCC 门禁，
+  // 在 Windows/Linux 上既没有可授予的权限，也没有可跳转的系统设置面板。
+  if (!status.supported) return null;
+
   const broken = !status.listening || (status.listen_event !== true && status.key_events === 0);
   if (!broken) return null;
 
