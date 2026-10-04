@@ -2,7 +2,7 @@
 
 # Desktop Translation
 
-Um aplicativo de tradução para desktop no macOS que traduz no instante em que você seleciona um texto: pressione um atalho, aparece um popup com a tradução e consulte palavras em um dicionário local de qualidade GoldenDict.
+Um aplicativo de tradução para desktop no **macOS e no Windows** que traduz no instante em que você seleciona um texto: pressione um atalho, aparece um popup com a tradução e consulte palavras em um dicionário local de qualidade GoldenDict. O macOS é o alvo principal; as versões para Linux são fornecidas, mas ainda não oferecem tradução por seleção.
 
 Criado com Tauri 2 (Rust) + React 19. Nove idiomas de interface, todos os dados ficam no seu computador.
 
@@ -12,17 +12,36 @@ Criado com Tauri 2 (Rust) + React 19. Nove idiomas de interface, todos os dados 
 |---|---|---|
 | macOS 11+ | Apple Silicon (aarch64) | `DesktopTranslation_{version}_aarch64.dmg` |
 | macOS 11+ | Intel (x86_64) | `DesktopTranslation_{version}_x64.dmg` |
+| Windows 10 / 11 | x86_64 | `DesktopTranslation_{version}_x64-setup.exe` (instalador NSIS) |
+| Linux | x86_64 | `DesktopTranslation_{version}_amd64.AppImage` |
 
 - GitHub Releases: https://github.com/restyhap/desktop-02-translation/releases
 - Gitee Releases: https://gitee.com/restyhap/desktop-02-translation/releases
 
-Abra o dmg e arraste o aplicativo para fora; substituir uma versão mais antiga funciona sem problemas. **Todos os dados do usuário ficam fora do pacote do aplicativo** (`~/Library/Application Support/com.desktop-translation/`), portanto atualizar nunca afeta seu histórico, vocabulário ou configurações.
+**macOS** — abra o dmg e arraste o aplicativo para fora. **Windows** — execute o instalador `.exe`; se o SmartScreen avisar sobre um publicador desconhecido, escolha *Mais informações → Executar assim mesmo* (veja a observação abaixo). **Linux** — aplique `chmod +x` ao AppImage e execute-o; ele precisa de um runtime FUSE, ou então inicie-o com `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+Substituir uma versão mais antiga funciona sem problemas. **Todos os dados do usuário ficam fora do pacote do aplicativo** (`~/Library/Application Support/com.desktop-translation/` no macOS, `%APPDATA%\com.desktop-translation\` no Windows, `~/.local/share/com.desktop-translation/` no Linux), portanto atualizar nunca afeta seu histórico, vocabulário ou configurações.
 
 > Os nomes dos arquivos contêm o número da versão — confira os nomes reais na página Releases.
 
-### Observação sobre a versão Intel
+### Suporte a plataformas
 
-A versão Intel (x86_64) **não inclui a síntese de voz neural MOSS-TTS**; a pronúncia passa a usar o `speechSynthesis` do sistema macOS. Motivo: sua dependência `ort-sys` não possui biblioteca pré-compilada para x86_64-macos. A consulta ao dicionário, a tradução, os popups de seleção e o histórico se comportam de forma idêntica.
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| Tradução por seleção (atalho global) | ✅ | ✅ | ❌ ainda não |
+| Consulta ao dicionário local | ✅ | ✅ | ✅ |
+| Mecanismos, histórico, vocabulário | ✅ | ✅ | ✅ |
+| Voz neural (MOSS-TTS) | ✅ apenas Apple Silicon | ❌ voz do sistema | ❌ voz do sistema |
+| Atualizações no aplicativo | ✅ | ✅ | ✅ |
+| Assinatura de código do sistema | ad-hoc | nenhuma — aviso do SmartScreen | nenhuma |
+
+No Windows os atalhos globais funcionam **sem nenhuma solicitação de permissão** (usa um hook de teclado de baixo nível que repassa todas as teclas aos outros aplicativos). A tradução por seleção no Linux não está implementada: o Wayland proíbe que aplicativos capturem teclas globais. O aplicativo informa isso na página inicial em vez de falhar silenciosamente — todo o restante, inclusive a tradução manual, funciona normalmente.
+
+> ⚠️ **SmartScreen no Windows** — o instalador não é assinado com Authenticode, portanto o Windows pode exibir “O Windows protegeu seu PC”. Escolha *Mais informações → Executar assim mesmo*. Isso é diferente da assinatura minisign usada nas atualizações, que cobre apenas os pacotes de atualização.
+
+### Observação sobre a síntese de voz
+
+A versão **Intel (x86_64)** e **todas as versões fora do macOS** **não incluem a síntese de voz neural MOSS-TTS**; a pronúncia passa a usar o `speechSynthesis` do sistema. Motivo: sua dependência `ort-sys` não possui biblioteca pré-compilada para x86_64-macos, Windows ou Linux. A consulta ao dicionário, a tradução, os popups de seleção e o histórico se comportam de forma idêntica.
 
 ## Recursos
 
@@ -31,29 +50,38 @@ A versão Intel (x86_64) **não inclui a síntese de voz neural MOSS-TTS**; a pr
 - **Múltiplos mecanismos** — Google, DeepL, Baidu, Youdao, Caiyun, Alibaba e Volcengine já configurados; adicione mecanismos personalizados e um endpoint de LLM personalizado nas configurações
 - **Histórico e vocabulário** — cada tradução é armazenada, os favoritos são mantidos para sempre e as entradas podem ser enviadas para grupos de vocabulário
 - **Nove idiomas de interface** — English / 简体中文 / Deutsch / Français / Español / Italiano / Português / Русский / 한국어
-- **Permanente na barra de menus** — fechar a janela a oculta na bandeja; o menu da bandeja exibe a janela ou encerra o aplicativo
-- **Iniciar ao fazer login** — início silencioso em segundo plano opcional via LaunchAgent, com watchdog de heartbeat para autorreparo
+- **Permanente na barra de menus** — fechar a janela a oculta na bandeja (barra de menus no macOS, área de notificação nas demais plataformas); o menu da bandeja exibe a janela ou encerra o aplicativo
+- **Iniciar ao fazer login** — início silencioso em segundo plano opcional via LaunchAgent (macOS) / o mecanismo de autostart de cada plataforma nas demais, com watchdog de heartbeat para autorreparo
 - **Pronúncia** — síntese de voz do sistema com configurações de voz, velocidade, tom e volume
 - **Retenção de histórico** — janela de retenção configurável; registros não favoritos expirados são removidos na inicialização e sempre que você alterar a configuração
 
 ## Atalhos padrão
 
-| Atalho | Ação |
-|---|---|
-| `⌘ + C + C` | Traduzir a seleção atual (popup) |
-| `⌘ + C + V` | Mostrar a janela principal |
+| Plataforma | Atalho | Ação |
+|---|---|---|
+| macOS | `⌘ + C + C` | Traduzir a seleção atual (popup) |
+| macOS | `⌘ + C + V` | Mostrar a janela principal |
+| Windows | `Ctrl + C + C` | Traduzir a seleção atual (popup) |
+| Windows | `Ctrl + C + V` | Mostrar a janela principal |
 
-Os dois podem ser regravados nas Configurações. A escuta global de teclas usa um event tap do macOS ligado ao run loop da thread principal — sem processo auxiliar e sem biblioteca de terceiros. Alterações de atalhos substituem a tabela de regras a quente, sem reconstruir o tap.
+Os dois podem ser regravados nas Configurações. A escuta global de teclas é um hook próprio, sem processo auxiliar e sem biblioteca de terceiros: no macOS, um event tap ListenOnly ligado ao run loop da thread principal; no Windows, um hook de teclado de baixo nível que repassa todas as teclas (`WH_KEYBOARD_LL`). Alterações de atalhos substituem a tabela de regras a quente, sem reconstruir o hook.
 
-> ⚠️ No primeiro uso, conceda permissão ao aplicativo em **Ajustes do Sistema → Privacidade e Segurança → Monitorização de entrada**, caso contrário os atalhos globais e a captura da seleção não funcionarão. Enquanto a permissão faltar, a **página inicial** exibe um aviso com duas ações: “Abrir Monitorização de entrada” e “Ir para Configurações”. A permissão está vinculada ao hash de código do aplicativo, portanto precisa ser concedida novamente após instalar uma nova versão. Se a entrada já existir, o macOS não mostra nenhuma solicitação — **desligue e religue o interruptor** para renová-la.
+> ⚠️ **macOS** — no primeiro uso, conceda permissão ao aplicativo em **Ajustes do Sistema → Privacidade e Segurança → Monitorização de entrada**, caso contrário os atalhos globais e a captura da seleção não funcionarão. Enquanto a permissão faltar, a **página inicial** exibe um aviso com duas ações: “Abrir Monitorização de entrada” e “Ir para Configurações”. A permissão está vinculada ao hash de código do aplicativo, portanto precisa ser concedida novamente após instalar uma nova versão. Se a entrada já existir, o macOS não mostra nenhuma solicitação — **desligue e religue o interruptor** para renová-la.
+>
+> **Windows** — nada a conceder; o hook não precisa de nenhuma permissão especial.
+>
+> **Linux** — a tradução por seleção não está disponível, e a página inicial informa isso em vez de ficar em silêncio. Todo o restante funciona.
 
 ## Compilar a partir do código-fonte
 
 ### Requisitos
 
-- macOS 11+ (Apple Silicon ou Intel)
+- macOS 11+ (Apple Silicon ou Intel) — o alvo principal
+- Windows 10/11 com as ferramentas de build MSVC, ou Linux com `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libfuse2`
 - Node.js 20+ e [pnpm](https://pnpm.io/)
-- Toolchain Rust (via `rustup`) e Xcode Command Line Tools
+- Toolchain Rust (via `rustup`) e Xcode Command Line Tools (somente macOS)
+
+> A compilação cruzada nativa não funciona aqui (o Windows precisa de MSVC, o Linux precisa de WebKitGTK/libdbus). As builds para Windows e Linux são executadas nos runners dessas próprias plataformas — veja `.github/workflows/ci.yml` e `.github/workflows/release.yml`.
 
 ### Passos
 
@@ -86,8 +114,12 @@ cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-apple-darwin
 
 ```bash
 pnpm tauri build
-# output: src-tauri/target/release/bundle/dmg/
+# macOS:   src-tauri/target/release/bundle/dmg/
+# Windows: src-tauri/target/release/bundle/nsis/
+# Linux:   src-tauri/target/release/bundle/appimage/
 ```
+
+Os releases das quatro chaves de plataforma são produzidos pela CI (`.github/workflows/release.yml`): envie uma tag anotada `v*` e a matriz de build produz dmg + NSIS + AppImage, além dos artefatos de atualização assinados com minisign; em seguida o job de publish os mescla em um único `latest.json` para as quatro plataformas.
 
 Consulte [SIGNING_GUIDE.md](./SIGNING_GUIDE.md) sobre a assinatura de atualizações.
 
@@ -111,14 +143,19 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
+  app/hook_core.rs        correspondência de regras neutra quanto à plataforma + ação de tradução (todas as plataformas)
+  app/keyboard_hook.rs        macOS: event tap ListenOnly próprio ligado ao run loop da thread principal
+  app/keyboard_hook_windows.rs  Windows: hook de teclado de baixo nível que repassa as teclas (WH_KEYBOARD_LL)
+  app/keyboard_hook_unsupported.rs  demais plataformas: placeholder inoperante com a mesma API
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
   commands/             IPC commands (thin thunks)
 
 docs/                   requirements, database design, dictionary plan, progress archives
-release.sh              dual-architecture build + dual-host release sync script
+release.sh              build de duas arquiteturas apenas para macOS + script de sincronização com os dois hosts
+                          (os releases de quatro plataformas passam pela CI; o script se recusa a
+                           sobrescrever um latest.json de múltiplas plataformas)
 ```
 
 Camadas: o frontend conversa com o Rust apenas por meio de `invoke`; do lado do Rust, `commands/` permanece fino e a lógica de negócio fica em `*_store.rs`; o schema do SQLite é definido uma única vez em `db::apply_schema()` e compartilhado entre a inicialização em produção e os testes.
@@ -126,7 +163,7 @@ Camadas: o frontend conversa com o Rust apenas por meio de `invoke`; do lado do 
 ## Stack
 
 - **Framework do aplicativo**: Tauri 2.12 (Rust) + React 19 + TypeScript + Vite 6 + Tailwind CSS 4
-- **Atalhos globais**: event tap de macOS próprio (ListenOnly), ligado ao run loop da thread principal
+- **Atalhos globais**: próprios, sem biblioteca de terceiros para hooks — event tap `CGEventTap` (ListenOnly) do macOS no run loop da thread principal; no Windows, hook de teclado de baixo nível `WH_KEYBOARD_LL` que repassa as teclas, em uma thread privada
 - **Armazenamento**: SQLite via crate `sqlite` (dicionários, configurações, histórico, vocabulário, chaves de API)
 - **Voz**: Web Speech API (`speechSynthesis`)
 - **Plugins do Tauri**: autostart (LaunchAgent), window-state, global-shortcut, single-instance, clipboard-manager, dialog

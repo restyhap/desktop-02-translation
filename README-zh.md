@@ -2,7 +2,7 @@
 
 # Desktop Translation
 
-一款 macOS 桌面翻译应用：选中文字即刻翻译 —— 按下快捷键，弹出翻译结果窗口，并可用本地 GoldenDict 级词典查词。
+一款面向 **macOS 与 Windows** 的桌面翻译应用：选中文字即刻翻译 —— 按下快捷键，弹出翻译结果窗口，并可用本地 GoldenDict 级词典查词。macOS 是主战场；Linux 版可用，但划词翻译暂不支持。
 
 基于 Tauri 2（Rust）+ React 19 构建。界面支持九种语言，所有数据都留在你自己的机器上。
 
@@ -12,17 +12,36 @@
 |---|---|---|
 | macOS 11+ | Apple Silicon (aarch64) | `DesktopTranslation_{version}_aarch64.dmg` |
 | macOS 11+ | Intel (x86_64) | `DesktopTranslation_{version}_x64.dmg` |
+| Windows 10 / 11 | x86_64 | `DesktopTranslation_{version}_x64-setup.exe`（NSIS 安装包） |
+| Linux | x86_64 | `DesktopTranslation_{version}_amd64.AppImage` |
 
 - GitHub Releases: https://github.com/restyhap/desktop-02-translation/releases
 - Gitee Releases: https://gitee.com/restyhap/desktop-02-translation/releases
 
-打开 dmg 并把应用拖出来即可；替换旧版本完全没有问题。**所有用户数据都存放在 app 包之外**（`~/Library/Application Support/com.desktop-translation/`），所以升级绝不会影响你的历史记录、生词本或设置。
+**macOS** —— 打开 dmg 并把应用拖出来。**Windows** —— 运行 `.exe` 安装包；若 SmartScreen 提示未知发布者，选「更多信息 → 仍要运行」（见下方说明）。**Linux** —— 先 `chmod +x` 再运行 AppImage；它需要 FUSE 运行时，也可以用 `APPIMAGE_EXTRACT_AND_RUN=1` 启动。
+
+替换旧版本完全没有问题。**所有用户数据都存放在 app 包之外**（macOS 在 `~/Library/Application Support/com.desktop-translation/`，Windows 在 `%APPDATA%\com.desktop-translation\`，Linux 在 `~/.local/share/com.desktop-translation/`），所以升级绝不会影响你的历史记录、生词本或设置。
 
 > 安装包名称带有版本号 —— 请以 Releases 页面上的实际文件名为准。
 
-### Intel 版本说明
+### 平台支持情况
 
-Intel（x86_64）版本**不包含 MOSS-TTS 神经网络语音合成**；发音会回退到 macOS 系统自带的 `speechSynthesis`。原因：它的 `ort-sys` 依赖没有 x86_64-macos 的预编译库。词典查询、翻译、划词弹窗和历史记录的表现完全一致。
+| | macOS | Windows | Linux |
+|---|---|---|---|
+| 划词翻译（全局快捷键） | ✅ | ✅ | ❌ 暂不支持 |
+| 本地词典查询 | ✅ | ✅ | ✅ |
+| 翻译引擎、历史记录、生词本 | ✅ | ✅ | ✅ |
+| 神经语音（MOSS-TTS） | ✅ 仅 Apple Silicon | ❌ 系统语音 | ❌ 系统语音 |
+| 应用内更新 | ✅ | ✅ | ✅ |
+| 系统代码签名 | ad-hoc | 无，会弹 SmartScreen 提示 | 无 |
+
+Windows 上的全局快捷键**无需任何授权**（用的是把按键原样放行的低级键盘钩子）。Linux 上的划词翻译尚未实现：Wayland 安全模型禁止应用捕获全局按键。应用会在**主页明确写出这一点**，而不是让你按了没反应；其余功能（包括手动输入翻译）完全正常。
+
+> ⚠️ **Windows SmartScreen** —— 安装包没有做 Authenticode 签名，Windows 可能提示「Windows 已保护你的电脑」，选「更多信息 → 仍要运行」即可。这与更新用的 minisign 签名是两回事，后者只校验更新包。
+
+### 语音合成说明
+
+Intel（x86_64）版本与**所有非 macOS 版本**都**不包含 MOSS-TTS 神经网络语音合成**；发音会回退到系统自带的 `speechSynthesis`。原因：它的 `ort-sys` 依赖没有 x86_64-macos / Windows / Linux 的预编译库。词典查询、翻译、划词弹窗和历史记录的表现完全一致。
 
 ## 功能特性
 
@@ -38,22 +57,31 @@ Intel（x86_64）版本**不包含 MOSS-TTS 神经网络语音合成**；发音�
 
 ## 默认快捷键
 
-| 快捷键 | 操作 |
-|---|---|
-| `⌘ + C + C` | 翻译当前选中的文本（弹窗） |
-| `⌘ + C + V` | 显示主窗口 |
+| 平台 | 快捷键 | 操作 |
+|---|---|---|
+| macOS | `⌘ + C + C` | 翻译当前选中的文本（弹窗） |
+| macOS | `⌘ + C + V` | 显示主窗口 |
+| Windows | `Ctrl + C + C` | 翻译当前选中的文本（弹窗） |
+| Windows | `Ctrl + C + V` | 显示主窗口 |
 
-两者都可以在设置中重新录制。全局按键监听使用挂在主线程 run loop 上的 macOS 事件 tap，没有独立子进程，也不依赖第三方监听库；修改快捷键时热替换规则表，无需重建 tap。
+两者都可以在设置中重新录制。全局按键监听是自建的钩子，没有独立子进程，也不依赖第三方监听库：macOS 用挂在主线程 run loop 上的 ListenOnly 事件 tap，Windows 用放行全部按键的低级键盘钩子（`WH_KEYBOARD_LL`，装在专用线程上）。修改快捷键时热替换规则表，无需重建钩子。
 
-> ⚠️ 首次使用时，请在**系统设置 → 隐私与安全性 → 输入监控**中授予本应用权限，否则全局快捷键和划词捕获都不会响应。权限缺失时**主页**会显示警告横幅，并提供「打开输入监控设置」与「去设置页」两个出口。该权限与应用代码哈希绑定，安装新版本后需要重新授予；而且 macOS 发现已有条目时不会主动弹窗，**请把开关关掉再打开**来刷新它。
+> ⚠️ **macOS** —— 首次使用时，请在**系统设置 → 隐私与安全性 → 输入监控**中授予本应用权限，否则全局快捷键和划词捕获都不会响应。权限缺失时**主页**会显示警告横幅，并提供「打开输入监控设置」与「去设置页」两个出口。该权限与应用代码哈希绑定，安装新版本后需要重新授予；而且 macOS 发现已有条目时不会主动弹窗，**请把开关关掉再打开**来刷新它。
+>
+> **Windows** —— 无需授权，钩子不需要任何特殊权限。
+>
+> **Linux** —— 划词翻译不可用，主页会明确写出这一点，而不是静默无反应。其余功能正常。
 
 ## 从源码构建
 
 ### 环境要求
 
-- macOS 11+（Apple Silicon 或 Intel）
+- macOS 11+（Apple Silicon 或 Intel）—— 主战场
+- Windows 10/11 需 MSVC 构建工具；Linux 需 `libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev libdbus-1-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libfuse2`
 - Node.js 20+ 和 [pnpm](https://pnpm.io/)
-- Rust 工具链（通过 `rustup` 安装）以及 Xcode Command Line Tools
+- Rust 工具链（通过 `rustup` 安装）以及 Xcode Command Line Tools（仅 macOS）
+
+> 这里**无法本机交叉编译**（Windows 需要 MSVC，Linux 需要 WebKitGTK / libdbus）。Windows 与 Linux 的构建在各自平台的 runner 上进行，见 `.github/workflows/ci.yml` 与 `.github/workflows/release.yml`。
 
 ### 步骤
 
@@ -111,7 +139,10 @@ src/                    React 19 frontend (Tailwind 4)
 
 src-tauri/src/
   lib.rs                Tauri Builder wiring (plugin registration)
-  app/keyboard_hook.rs  global hotkeys: self-built ListenOnly event tap on the main run loop
+  app/hook_core.rs     平台中立的规则匹配与划词动作（全平台编译）
+  app/keyboard_hook.rs        macOS：自建 ListenOnly 事件 tap，挂在主线程 run loop
+  app/keyboard_hook_windows.rs  Windows：放行全部按键的低级键盘钩子（WH_KEYBOARD_LL）
+  app/keyboard_hook_unsupported.rs  其余平台：同 API 的空实现占位
   bin/dictbuild.rs      dictionary build tool
   db.rs                 single-source SQLite schema (apply_schema)
   *_store.rs            history / vocabulary / settings data layer
