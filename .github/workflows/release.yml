@@ -231,11 +231,20 @@ jobs:
           # 「GITEE_TOKEN: unbound variable」而中断，且中断点在 origin push 之后 ——
           # 症状是 GitHub 有 latest.json、Gitee 没有，Release 也建了但没镜像过去。
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          # 鉴权失败时立刻报错，别退化成「向你索要密码」：CI 没有 TTY，真实症状只是一句
+          # 无信息量的 `could not read Password for 'https://***@gitee.com': No such device
+          # or address`，看不出是鉴权形式写错。
+          GIT_TERMINAL_PROMPT: "0"
         run: |
           set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Gitee remote 要在 pull/push 之前就位（下面的 token URL 形式不依赖它，
+          # Gitee 的 HTTPS 鉴权是 **用户名:私人令牌**，不能像 GitHub 那样把令牌当用户名：
+          # `https://<token>@gitee.com` 只提供了 username、没有 password，git 于是转而
+          # 交互式索要密码 —— CI 无 TTY，直接退出码 128。v0.1.6 与 v0.1.7 连续两次都挂在
+          # 这里（GitHub 侧资产是齐的，Gitee 的 latest.json 与 Release 镜像全没成）。
+          GITEE_URL="https://${REPO_GITEE%%/*}:${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git"
+          # Gitee remote 要在 pull/push 之前就位（上面的 URL 形式不依赖它，
           # 但保留 remote 便于失败时手工排查）
           git remote add gitee "https://gitee.com/$REPO_GITEE.git" 2>/dev/null || true
           git add latest.json
@@ -244,8 +253,8 @@ jobs:
           # 否则又是一次 non-fast-forward（checkout main 只解决了「tag 落后」这一种）。
           git pull --rebase origin main
           git push origin HEAD:main
-          git pull --rebase "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" main
-          git push "https://${GITEE_TOKEN}@gitee.com/$REPO_GITEE.git" HEAD:main
+          git pull --rebase "$GITEE_URL" main
+          git push "$GITEE_URL" HEAD:main
 
       - name: Mirror release to Gitee
         env:
