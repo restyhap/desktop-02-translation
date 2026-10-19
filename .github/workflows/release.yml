@@ -261,15 +261,26 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           set -euo pipefail
+          # Gitee 建发行版**必带 body**：缺了直接 400 {"messages":["body is missing"]}。
+          # 原先漏传，于是「Gitee 没按 tag 自动建发行版」时这步静默拿到 null，后面对
+          # 不存在的 id attach_files 全打 404，而循环不检查返回码 ⇒ 整步仍报成功（静默失败）。
+          # 正文用 tag 注释，与 GitHub 侧 release notes 同源。
+          NOTES="$(git tag -l "${GITHUB_REF_NAME}" --format='%(contents)')"
           RID=$(curl -s "https://gitee.com/api/v5/repos/$REPO_GITEE/releases/tags/${GITHUB_REF_NAME}?access_token=$GITEE_TOKEN" | jq -r '.id')
           if [ "$RID" = "null" ]; then
             RID=$(curl -s -X POST "https://gitee.com/api/v5/repos/$REPO_GITEE/releases" \
               -d "access_token=$GITEE_TOKEN" -d "tag_name=${GITHUB_REF_NAME}" \
-              -d "name=${GITHUB_REF_NAME}" -d "target_commitish=main" | jq -r '.id')
+              -d "name=${GITHUB_REF_NAME}" -d "target_commitish=main" \
+              --data-urlencode "body=$NOTES" | jq -r '.id')
           fi
+          case "$RID" in ''|null) echo "::error::Gitee 发行版创建/查询失败"; exit 1;; esac
+          fail=0
           for f in latest.json $(find artifacts -type f ! -name '*.sig'); do
             NAME="$(basename "$f" | tr -d ' ')"
-            curl -s -X POST "https://gitee.com/api/v5/repos/$REPO_GITEE/releases/$RID/attach_files" \
+            CODE=$(curl -s -X POST "https://gitee.com/api/v5/repos/$REPO_GITEE/releases/$RID/attach_files" \
               -F "access_token=$GITEE_TOKEN" -F "can_read=true" -F "file=@$f" \
-              -o /dev/null -w "  uploaded $NAME: %{http_code}\n"
+              -o /dev/null -w "%{http_code}")
+            echo "  uploaded $NAME: $CODE"
+            [ "$CODE" = "201" ] || fail=1
           done
+          [ "$fail" = "0" ] || { echo "::error::Gitee 资产上传未全部成功"; exit 1; }
