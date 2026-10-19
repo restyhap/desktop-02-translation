@@ -1,6 +1,6 @@
 [package]
 name = "desktop-translation"
-version = "0.1.6"
+version = "0.1.7"
 description = "Desktop Translation App"
 authors = ["you"]
 edition = "2021"
@@ -45,6 +45,11 @@ futures-util = "0.3"
 # 将来要恢复非 macOS 语音合成，需先确认 ort-sys 为对应平台提供了预编译库。
 [target.'cfg(all(target_os = "macos", not(target_arch = "x86_64")))'.dependencies]
 moss-tts-nano = "0.1.1"
+
+# 划词弹窗层级：把弹窗抬到 Dock(20) / 菜单栏(24) 之上。tao 本身就是 objc2-app-kit 的
+# 使用方，这里提为直接依赖不引入新的编译单元；只用到 NSWindow 一个类。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWindow"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-window-state = "2.5.0"

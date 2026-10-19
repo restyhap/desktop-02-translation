@@ -520,6 +520,50 @@ function ParamSlider({
   );
 }
 
+/**
+ * 外观分节的滑块（不透明度 / 自动隐藏时长）。
+ *
+ * Row 的控件区是**右对齐**的，所以滑块横向位置 = 右边缘 − 数值列宽 − 间距。数值列宽若
+ * 各自写死（原先一个是 `w-9`、一个是 `w-16`），两行滑块就会错开 28px。这里把几何收进
+ * 一个组件：滑块 `w-32` 定宽 + 数值列 `w-20` 定宽，两行**必然**对齐。
+ *
+ * 数值列不设 `nowrap`：九语里最长的是葡语「Nunca ocultar automaticamente」(约 148px)，
+ * 超出 80px 时折行，而不是溢出到滑块上。
+ */
+function AppearanceSlider({
+  value,
+  min,
+  max,
+  step,
+  display,
+  ariaLabel,
+  onChange,
+}: {
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  display: string;
+  ariaLabel: string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-32"
+        aria-label={ariaLabel}
+      />
+      <span className="w-20 text-right text-[11px] leading-4 tabular-nums text-ink-3">{display}</span>
+    </div>
+  );
+}
+
 /* ==================== 页面本体 ==================== */
 
 interface SettingsPanelProps {
@@ -857,37 +901,32 @@ export function SettingsPanel({ settings, onClose, onChange, onDictsRebuilt, onD
               </Select>
             </Row>
             <Row title={t("settings.opacity")}>
-              <div className="flex items-center gap-2">
-                <input
-                  type="range"
-                  min={50}
-                  max={100}
-                  step={5}
-                  value={settings.appearance.opacity}
-                  onChange={(e) => patch((d) => {
-                    d.appearance.opacity = Number(e.target.value);
-                  })}
-                  className="w-32"
-                  aria-label={t("settings.opacity")}
-                />
-                <span className="w-9 text-right text-[11px] text-ink-3">
-                  {settings.appearance.opacity}%
-                </span>
-              </div>
+              <AppearanceSlider
+                value={settings.appearance.opacity}
+                min={50}
+                max={100}
+                step={5}
+                display={`${settings.appearance.opacity}%`}
+                ariaLabel={t("settings.opacity")}
+                onChange={(v) => patch((d) => {
+                  d.appearance.opacity = v;
+                })}
+              />
             </Row>
             <Row title={t("settings.hideDelay")} hint={t("settings.hideDelayHint")}>
-              <Select
-                value={String(settings.appearance.hideDelay)}
-                onChange={(e) => patch((d) => {
-                  d.appearance.hideDelay = Number(e.target.value);
+              <AppearanceSlider
+                value={settings.appearance.hideDelay}
+                min={0}
+                max={10}
+                step={1}
+                display={settings.appearance.hideDelay > 0
+                  ? t("settings.seconds", { n: settings.appearance.hideDelay })
+                  : t("settings.noAutoHide")}
+                ariaLabel={t("settings.hideDelay")}
+                onChange={(v) => patch((d) => {
+                  d.appearance.hideDelay = v;
                 })}
-                className="h-8 text-xs"
-              >
-                <option value="0">{t("settings.noAutoHide")}</option>
-                <option value="3">{t("settings.seconds", { n: 3 })}</option>
-                <option value="5">{t("settings.seconds", { n: 5 })}</option>
-                <option value="10">{t("settings.seconds", { n: 10 })}</option>
-              </Select>
+              />
             </Row>
           </Section>
         </div>

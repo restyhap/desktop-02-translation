@@ -4,6 +4,9 @@ pub mod config;
 // 全平台编译；平台层（keyboard_hook*）只负责把原生事件转成 RawInput 转发进来。
 pub mod hook_core;
 
+// 划词弹窗/轻提示的窗口层级：macOS 抬到 Dock 与全屏 App 之上，其余平台空实现。
+pub mod popup_window;
+
 // 全局快捷键平台层：三选一。
 //   macOS   → CGEventTap（ListenOnly，挂在主线程 run loop，需「输入监控」授权）
 //   Windows → WH_KEYBOARD_LL（专用线程消息循环，无需授权）

@@ -5,14 +5,17 @@
  * - 事件源 = getCurrentWindow().listen("show-translate")：新文本自动翻译；
  *   同文本只重置隐藏计时（重复文本下永不隐藏的教训保留）
  * - 引擎切换 → 即时重译；引擎列表来自 listApiKeys
- * - hideDelay>0 自动隐藏（getCurrentWindow().hide）；hover/pointerdown 取消计时
- * - Escape / 点击外部 / × 关闭（隐藏窗口）
- * - 不透明度消费 settings.appearance.opacity；默认语向 settings.translation.*
+ * - hideDelay>0 自动隐藏（getCurrentWindow().hide）：出现即计时，鼠标停在弹窗上暂停
+ *   （显示「已暂停」），移开后从完整延时重新计；到点隐藏
+ * - Escape / × / 点击弹窗外（窗口失焦）/ 倒计时到点 → 隐藏窗口
+ * - 不透明度消费 settings.appearance.opacity；设置改动由主窗口广播 settings-updated
+ *   即时同步（常驻窗口不会重新挂载，否则要重启才生效）；默认语向 settings.translation.*
  * - 失败 → errorResult 占位（不落历史）；拖拽/8 向 resize 保留原生窗口能力
  * 视觉来自 preview 回信卡同源设计（标题栏 + 原句小字 + 译文大字 accent 衬线 + 焦点圈）。
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { listApiKeys, getSettings } from "@/storage";
 import { errorResult, translateAndSave } from "@/storage/translation";
 import type { AppSettings } from "@/types/settings";
@@ -42,6 +45,12 @@ interface TranslateEvent {
   cursorY?: number;
 }
 
+/** 主窗口在设置变更时广播的增量（见 App.changeSettings） */
+interface SettingsPatch {
+  appearance?: Partial<AppSettings["appearance"]>;
+  translation?: Partial<AppSettings["translation"]>;
+}
+
 function TranslatePopup() {
   const [result, setResult] = useState<TranslationResult | null>(null);
   const [visible, setVisible] = useState(true);
@@ -56,59 +65,84 @@ function TranslatePopup() {
     hideDelay: DEFAULT_SETTINGS.appearance.hideDelay,
   });
   const lastTextRef = useRef<string>("");
-  const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** 实时倒计时（秒）：与 hide 定时器同步跳动，0/不入计时=常驻 */
+  /** 最新设置快照：弹窗是常驻窗口（启动时只读过一次设置），靠 ref 让回调始终拿到新值 */
+  const settingsRef = useRef(settings);
+  /** 实时倒计时（秒）：0 = 没在计时（常驻，或刚好复位） */
   const [countdown, setCountdown] = useState(0);
+  /** 鼠标停在弹窗上 → 倒计时暂停（显示「已暂停」而不是误导性的 0 秒） */
+  const [paused, setPaused] = useState(false);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  /** 剩余秒数放 ref：interval 里改它，不把副作用写进 setState 更新函数 */
+  const remainingRef = useRef(0);
+  /** 鼠标是否停在弹窗上（决定 scheduleHide 是计时还是保持暂停） */
+  const hoveredRef = useRef(false);
 
-  const stopTick = () => {
+  const stopTick = useCallback(() => {
     if (tickRef.current) {
       clearInterval(tickRef.current);
       tickRef.current = null;
     }
-  };
+  }, []);
 
-  const scheduleHide = () => {
-    if (settings.hideDelay <= 0) {
-      stopTick();
-      setCountdown(0);
+  /** 复位计时状态（不隐藏窗口） */
+  const cancelHide = useCallback(() => {
+    stopTick();
+    remainingRef.current = 0;
+    setCountdown(0);
+    setPaused(false);
+  }, [stopTick]);
+
+  /** 唯一出口：隐藏窗口并卸载卡片（倒计时到点 / 点弹窗外 / × / Esc 共用） */
+  const hidePopup = useCallback(() => {
+    stopTick();
+    remainingRef.current = 0;
+    setCountdown(0);
+    setPaused(false);
+    setVisible(false);
+    // 窗口一旦隐藏，鼠标的 mouseleave 就再也不会到达 —— 悬停标记必须在这里清掉，
+    // 否则下次弹出会误判「鼠标还在弹窗上」而永远不计时
+    hoveredRef.current = false;
+    getCurrentWindow()
+      .hide()
+      .catch((err: unknown) => console.error("[popup] 隐藏窗口失败:", err));
+  }, [stopTick]);
+
+  /** 鼠标在弹窗上 → 暂停：停表但保留剩余秒数 */
+  const pauseCountdown = useCallback(() => {
+    if (settingsRef.current.hideDelay <= 0) return;
+    stopTick();
+    setPaused(true);
+  }, [stopTick]);
+
+  /**
+   * 开始/重新开始倒计时。弹窗每次出现、以及鼠标移开时调用：
+   * 出现即计时（鼠标在不在弹窗上都算），悬停时保持暂停，移开后从完整延时重新计。
+   */
+  const scheduleHide = useCallback(() => {
+    const delay = settingsRef.current.hideDelay;
+    if (delay <= 0) {
+      cancelHide();
       return;
     }
-    cancelHide();
-    setCountdown(settings.hideDelay);
-    // 每秒跳动 UI 倒计时；到 0 时隐藏窗口
-    tickRef.current = setInterval(() => {
-      setCountdown((c) => {
-        if (c <= 1) {
-          stopTick();
-          setCountdown(0);
-          getCurrentWindow()
-            .hide()
-            .catch((err: unknown) => console.error("[popup] 隐藏窗口失败:", err));
-          return 0;
-        }
-        return c - 1;
-      });
-    }, 1000);
-  };
-
-  const cancelHide = () => {
-    if (hideTimerRef.current) {
-      clearTimeout(hideTimerRef.current);
-      hideTimerRef.current = null;
+    if (hoveredRef.current) {
+      pauseCountdown();
+      return;
     }
     stopTick();
-    setCountdown(0);
-  };
-
-  useEffect(() => {
-    return () => {
-      stopTick();
-      if (hideTimerRef.current) {
-        clearTimeout(hideTimerRef.current);
+    remainingRef.current = delay;
+    setCountdown(delay);
+    setPaused(false);
+    tickRef.current = setInterval(() => {
+      remainingRef.current -= 1;
+      if (remainingRef.current <= 0) {
+        hidePopup();
+        return;
       }
-    };
-  }, []);
+      setCountdown(remainingRef.current);
+    }, 1000);
+  }, [cancelHide, hidePopup, pauseCountdown, stopTick]);
+
+  useEffect(() => stopTick, [stopTick]);
 
   useEffect(() => {
     listApiKeys()
@@ -145,31 +179,84 @@ function TranslatePopup() {
     };
   }, []);
 
-  const performTranslation = (text: string, engine: string) => {
-    if (!text.trim()) return;
+  // settingsRef 始终指向最新设置：常驻弹窗不会重新挂载，回调里只能靠它拿新值
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
 
-    setVisible(true);
-    setLoading(true);
-    setError(null);
-    lastTextRef.current = text;
-    scheduleHide();
-
-    // 弹窗位置由 Rust 侧负责（光标所在显示器 + 逻辑像素边界修正），前端不做定位
-
-    translateAndSave(text, settings.sourceLang, settings.targetLang, engine)
-      .then((translatedResult) => {
-        setResult(translatedResult);
+  // 设置页改动 → 主窗口广播 settings-updated：弹窗立刻用上新延时/不透明度，无需重启
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let alive = true;
+    listen<SettingsPatch>("settings-updated", (event) => {
+      const patch = event.payload;
+      if (!patch) return;
+      setSettings((prev) => ({
+        sourceLang: patch.translation?.defaultSourceLang ?? prev.sourceLang,
+        targetLang: patch.translation?.defaultTargetLang ?? prev.targetLang,
+        opacity: patch.appearance?.opacity ?? prev.opacity,
+        hideDelay: patch.appearance?.hideDelay ?? prev.hideDelay,
+      }));
+    })
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn();
       })
-      .catch((err: unknown) => {
-        console.error("[popup] 翻译失败:", err);
-        const message = err instanceof Error ? err.message : "翻译失败";
-        setError(message);
-        setResult(errorResult(text, engine, settings.sourceLang, settings.targetLang));
+      .catch((err: unknown) => console.error("[popup] 设置变更监听失败:", err));
+    return () => {
+      alive = false;
+      if (unlisten) unlisten();
+    };
+  }, []);
+
+  // 点弹窗外 = 本窗口失焦 → 立即收起（点 Dock、iTerm2、主窗口都会让弹窗失焦）
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let alive = true;
+    getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (!focused) hidePopup();
       })
-      .finally(() => {
-        setLoading(false);
-      });
-  };
+      .then((fn) => {
+        if (alive) unlisten = fn;
+        else fn();
+      })
+      .catch((err: unknown) => console.error("[popup] 失焦监听失败:", err));
+    return () => {
+      alive = false;
+      if (unlisten) unlisten();
+    };
+  }, [hidePopup]);
+
+  const performTranslation = useCallback(
+    (text: string, engine: string) => {
+      if (!text.trim()) return;
+
+      const { sourceLang, targetLang } = settingsRef.current;
+      setVisible(true);
+      setLoading(true);
+      setError(null);
+      lastTextRef.current = text;
+      scheduleHide();
+
+      // 弹窗位置由 Rust 侧负责（光标所在显示器 + 逻辑像素边界修正），前端不做定位
+
+      translateAndSave(text, sourceLang, targetLang, engine)
+        .then((translatedResult) => {
+          setResult(translatedResult);
+        })
+        .catch((err: unknown) => {
+          console.error("[popup] 翻译失败:", err);
+          const message = err instanceof Error ? err.message : "翻译失败";
+          setError(message);
+          setResult(errorResult(text, engine, sourceLang, targetLang));
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    },
+    [scheduleHide],
+  );
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -180,17 +267,12 @@ function TranslatePopup() {
           const payload = event.payload as { text: string; cursorX?: number; cursorY?: number };
           const text = payload.text?.trim() || "";
 
-          // 无论文本是否重复，弹出都重置隐藏计时（避免重复文本下永不隐藏）
-          cancelHide();
-
-          if (!text || text === lastTextRef.current) {
-            setVisible(true);
-            scheduleHide();
-            return;
-          }
-
+          // 无论文本是否重复，弹出都从完整延时重新计时（避免重复文本下永不隐藏）
           setVisible(true);
           scheduleHide();
+
+          if (!text || text === lastTextRef.current) return;
+
           if (currentEngine) {
             performTranslation(text, currentEngine);
           }
@@ -204,23 +286,17 @@ function TranslatePopup() {
     return () => {
       if (unlisten) unlisten();
     };
-  }, [currentEngine]);
-
-  const handleClose = async () => {
-    setVisible(false);
-    const win = getCurrentWindow();
-    await win.hide();
-  };
+  }, [currentEngine, performTranslation, scheduleHide]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        handleClose().catch((err: unknown) => console.error("[popup] 关闭失败:", err));
+        hidePopup();
       }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [hidePopup]);
 
   const startDragWindow = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -249,14 +325,21 @@ function TranslatePopup() {
         opacity={Math.max(0.3, settings.opacity / 100)}
         hideDelay={settings.hideDelay}
         countdown={countdown}
+        paused={paused}
         targetLang={settings.targetLang}
         onEngineChange={(service) => {
           setCurrentEngine(service);
           if (lastTextRef.current) performTranslation(lastTextRef.current, service);
         }}
-        onClose={handleClose}
-        onCancelHide={cancelHide}
-        onScheduleHide={scheduleHide}
+        onClose={hidePopup}
+        onHoverStart={() => {
+          hoveredRef.current = true;
+          pauseCountdown();
+        }}
+        onHoverEnd={() => {
+          hoveredRef.current = false;
+          scheduleHide();
+        }}
         onStartDrag={startDragWindow}
         onStartResize={startResize}
       />
@@ -277,21 +360,25 @@ interface PopupCardProps {
   hideDelay: number;
   /** 实时倒计时（秒），0=无计时 */
   countdown: number;
+  /** 鼠标停在弹窗上、倒计时已暂停 */
+  paused: boolean;
   targetLang: Language;
   /** 可见性门：false 时仅卸载卡片 UI（外壳监听仍在，Cmd+C+C 可随时唤回） */
   open: boolean;
   onEngineChange: (service: string) => void;
   onClose: () => void;
-  onCancelHide: () => void;
-  onScheduleHide: () => void;
+  /** 鼠标进入弹窗 / 在弹窗上下按：暂停倒计时 */
+  onHoverStart: () => void;
+  /** 鼠标离开弹窗：从完整延时重新开始倒计时 */
+  onHoverEnd: () => void;
   onStartDrag: (e: React.PointerEvent) => void;
   onStartResize: (dir: ResizeDirection) => (e: React.PointerEvent) => void;
 }
 
 function PopupCard({
   result, visibleText, loading, error, engines, engine,
-  opacity, hideDelay, countdown, targetLang, open, onEngineChange, onClose,
-  onCancelHide, onScheduleHide, onStartDrag, onStartResize,
+  opacity, hideDelay, countdown, paused, targetLang, open, onEngineChange, onClose,
+  onHoverStart, onHoverEnd, onStartDrag, onStartResize,
 }: PopupCardProps) {
   const { t } = useAppLocale();
   const { showToast } = useToast();
@@ -350,9 +437,9 @@ function PopupCard({
         onKeyDown={onTrapKey}
         className="popup-root relative flex h-full w-full flex-col overflow-hidden rounded-xl border border-line bg-bg-elevated"
         style={{ opacity }}
-        onMouseEnter={onCancelHide}
-        onMouseLeave={onScheduleHide}
-        onPointerDown={onCancelHide}
+        onMouseEnter={onHoverStart}
+        onMouseLeave={onHoverEnd}
+        onPointerDown={onHoverStart}
       >
         {/* 8 个 resize 热区（每边 16px，四角 20px），原生 startResizeDragging 交给 OS */}
         <div className="absolute left-4 right-4 top-0 z-20 h-4 cursor-n-resize" onPointerDown={onStartResize("North")} />
@@ -437,7 +524,11 @@ function PopupCard({
             <StarIcon size={12} filled={favorite} />
           </button>
           <span className="ml-auto font-mono text-[10px] tabular-nums text-ink-3">
-            {hideDelay > 0 ? t("popup.autoHideIn", { n: countdown }) : t("popup.stay")}
+            {hideDelay > 0
+              ? paused
+                ? t("popup.autoHidePaused")
+                : t("popup.autoHideIn", { n: countdown || hideDelay })
+              : t("popup.stay")}
           </span>
         </div>
       </div>

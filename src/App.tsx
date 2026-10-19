@@ -15,7 +15,7 @@
  
  */
 import { useCallback, useEffect, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { dictBuild, dictHasDb as hasDictDb, dictLookup, listDicts, type DictInfo } from "@/storage/dict";
 import { getDBStatus, initDB, getTranslations, listApiKeys, getSettings, saveSettings, getVocabularyWords, deleteVocabularyWord } from "@/storage";
 import { mapRecordToUi } from "@/storage/translation";
@@ -87,6 +87,14 @@ function App() {
       setSettings(next);
       saveSettings(next).catch((err: unknown) => {
         console.error("[App] 保存设置失败:", err);
+      });
+      // 划词弹窗是常驻窗口（只在启动时读过一次设置），必须广播才能让新设置立刻生效
+      // （不透明度 / 自动隐藏延时），否则要重启应用才看得到变化。
+      emit("settings-updated", {
+        appearance: next.appearance,
+        translation: next.translation,
+      }).catch((err: unknown) => {
+        console.error("[App] 广播设置变更失败:", err);
       });
     },
     [],

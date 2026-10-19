@@ -527,6 +527,40 @@ fn match_key_down(
 
 // ==================== 命中后的动作（主线程） ====================
 
+/// 上一次**成功复制**到的文本。
+///
+/// 连按触发时，序列里第一次按键由系统真实执行复制：**有选区才复制、没选区什么都不
+/// 做**（剪贴板不变）。所以剪贴板读空并不等于「用户想翻译空内容」，而是「这次没复制
+/// 成」。此时回退到本记忆里的上一次内容，用户就不会因为一次空选区把上次的翻译丢掉。
+/// 见 `resolve_clipboard`。
+static LAST_CLIPBOARD: Mutex<Option<String>> = Mutex::new(None);
+
+/// 本次触发该翻译什么。
+#[derive(Debug, PartialEq, Eq)]
+enum ClipboardChoice {
+    /// 这次真的复制到了内容：翻译它，并记为「上次复制内容」
+    Fresh(String),
+    /// 剪贴板为空但记得上次的内容：复用上次的，**不清空记忆**
+    Fallback(String),
+    /// 从没成功复制过任何内容
+    Empty,
+}
+
+/// 剪贴板读到的内容 → 本次翻译目标。
+///
+/// `current` 是本次从剪贴板读到的（可能为空）文本，`last` 是上一次成功复制的内容。
+/// 纯函数，便于单测 —— 真正的读剪贴板/写记忆在 `handle_translate` 里。
+fn resolve_clipboard(current: &str, last: Option<&str>) -> ClipboardChoice {
+    let current = current.trim();
+    if !current.is_empty() {
+        return ClipboardChoice::Fresh(current.to_string());
+    }
+    match last.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(previous) => ClipboardChoice::Fallback(previous.to_string()),
+        None => ClipboardChoice::Empty,
+    }
+}
+
 /// 命中规则 → 在主线程执行命令。
 ///
 /// 与 macOS 的 `⌘+C+C` 同构，Windows 的 `Ctrl+C+C` 也是同一套语义：**序列里第一次
@@ -565,13 +599,25 @@ fn handle_translate(app: &tauri::AppHandle) {
         thread::sleep(Duration::from_millis(80));
     }
 
-    // 剪贴板为空 → 不弹窗（系统复制键无可复制内容时同样不动作；
-    // 同文本重复触发由前端 lastTextRef 直接重看上次翻译，无需后端缓存）
-    if text.trim().is_empty() {
-        eprintln!("[main] 剪贴板为空，跳过翻译");
-        show_empty_clipboard_toast(app);
-        return;
-    }
+    // 剪贴板为空 = 这一次没复制到东西（空选区 / 复制失败），不是「要翻译空内容」：
+    // 回退到上次成功复制的内容；一次都没复制过才什么都不做（系统复制键无可复制内容
+    // 时同样不动作）。同文本重复触发由前端 lastTextRef 直接重看上次翻译。
+    let previous = LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let text = match resolve_clipboard(&text, previous.as_deref()) {
+        ClipboardChoice::Empty => {
+            eprintln!("[main] 剪贴板为空且无历史复制内容，跳过翻译");
+            show_empty_clipboard_toast(app);
+            return;
+        }
+        ClipboardChoice::Fresh(t) => {
+            *LAST_CLIPBOARD.lock().unwrap_or_else(|e| e.into_inner()) = Some(t.clone());
+            t
+        }
+        ClipboardChoice::Fallback(t) => {
+            eprintln!("[main] 剪贴板为空，回退到上次复制的内容 len={}", t.len());
+            t
+        }
+    };
 
     eprintln!("[main] display_text len={}", text.len());
     let Some(window) = app.get_webview_window("translate") else {
@@ -585,6 +631,8 @@ fn handle_translate(app: &tauri::AppHandle) {
         let _ = window.set_position(LogicalPosition::new(px, py));
     }
     let _ = window.show();
+    // show 之后再抬层级：tao 建窗/置顶时会写回 NSFloatingWindowLevel，必须覆盖回去
+    crate::app::popup_window::raise_popup_level(&window);
     let _ = window.set_focus();
     let _ = window.emit("show-translate", serde_json::json!({ "text": text }));
 }
@@ -601,6 +649,7 @@ fn show_empty_clipboard_toast(app: &tauri::AppHandle) {
         let _ = toast.set_position(LogicalPosition::new(px, py));
     }
     let _ = toast.show();
+    crate::app::popup_window::raise_popup_level(&toast);
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(1200));
         let _ = toast.hide();
@@ -842,5 +891,40 @@ mod tests {
             match_key_down(&rules, key_c, mods).as_deref(),
             Some("TRANSLATE")
         );
+    }
+
+    /// 读到非空剪贴板 = 这次真的复制到了：翻译它，并记住供下次回退
+    #[test]
+    fn resolve_uses_fresh_clipboard_when_non_empty() {
+        assert_eq!(
+            resolve_clipboard("  hello  ", Some("old")),
+            ClipboardChoice::Fresh("hello".to_string())
+        );
+        assert_eq!(
+            resolve_clipboard("hello", None),
+            ClipboardChoice::Fresh("hello".to_string())
+        );
+    }
+
+    /// 剪贴板为空 = 这次没复制成（空选区）：回退到上次复制的内容，绝不丢上次的翻译
+    #[test]
+    fn resolve_falls_back_to_last_copy_when_clipboard_empty() {
+        assert_eq!(
+            resolve_clipboard("", Some("上次")),
+            ClipboardChoice::Fallback("上次".to_string())
+        );
+        assert_eq!(
+            resolve_clipboard("   ", Some("last")),
+            ClipboardChoice::Fallback("last".to_string())
+        );
+    }
+
+    /// 一次都没成功复制过：什么都不做（前端走「剪贴板为空」轻提示）
+    #[test]
+    fn resolve_is_empty_without_any_previous_copy() {
+        assert_eq!(resolve_clipboard("", None), ClipboardChoice::Empty);
+        assert_eq!(resolve_clipboard("  ", None), ClipboardChoice::Empty);
+        // 记忆里只有空白也算没内容
+        assert_eq!(resolve_clipboard("", Some("   ")), ClipboardChoice::Empty);
     }
 }
